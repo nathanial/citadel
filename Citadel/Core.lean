@@ -195,7 +195,7 @@ def parse (pattern : String) : RoutePattern :=
     if part == "*" then
       PathSegment.wildcard
     else if part.startsWith ":" then
-      PathSegment.param (part.drop 1)
+      PathSegment.param (part.drop 1).toString
     else
       PathSegment.literal part
   { segments }
