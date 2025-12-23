@@ -149,14 +149,15 @@ def run (s : Server) : IO Unit := do
 
   IO.println s!"Citadel server listening on {s.config.host}:{s.config.port}"
 
-  -- Accept loop
+  -- Accept loop (concurrent via IO.asTask)
   while true do
     let clientSocket ← serverSocket.accept
-    try
-      s.handleConnection clientSocket
-    catch e =>
-      IO.eprintln s!"Connection error: {e}"
-      try clientSocket.close catch _ => pure ()
+    let _ ← IO.asTask do
+      try
+        s.handleConnection clientSocket
+      catch e =>
+        IO.eprintln s!"Connection error: {e}"
+        try clientSocket.close catch _ => pure ()
 
 end Server
 
