@@ -18,6 +18,9 @@ lean_lib Tests where
 lean_exe citadel_tests where
   root := `Tests.Main
 
+lean_exe static_site where
+  root := `examples.StaticSite
+
 -- FFI: Build socket C code
 target socket_ffi_o pkg : FilePath := do
   let oFile := pkg.buildDir / "ffi" / "socket.o"
