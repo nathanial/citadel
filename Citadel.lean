@@ -4,6 +4,8 @@
 -/
 
 import Citadel.Core
+import Citadel.Socket
+import Citadel.Server
 
 -- Re-export Herald types for convenience
 export Herald.Core (Method StatusCode Version Headers Request Response)
