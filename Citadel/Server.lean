@@ -5,6 +5,7 @@
 -/
 import Citadel.Core
 import Citadel.Socket
+import Citadel.SSE
 
 namespace Citadel
 
@@ -26,6 +27,10 @@ structure Server where
   router : Router
   /-- Middleware stack -/
   middleware : List Middleware := []
+  /-- SSE connection manager (if SSE is enabled) -/
+  sseManager : Option SSE.ConnectionManager := none
+  /-- SSE routes: (pattern, topic) -/
+  sseRoutes : List (String × String) := []
 
 namespace Server
 
@@ -64,6 +69,63 @@ def patch (s : Server) (pattern : String) (handler : Handler) : Server :=
 def use (s : Server) (mw : Middleware) : Server :=
   { s with middleware := s.middleware ++ [mw] }
 
+/-- Enable SSE support on the server -/
+def withSSE (s : Server) (manager : SSE.ConnectionManager) : Server :=
+  { s with sseManager := some manager }
+
+/-- Register an SSE endpoint -/
+def sseRoute (s : Server) (pattern : String) (topic : String := "default") : Server :=
+  { s with sseRoutes := s.sseRoutes ++ [(pattern, topic)] }
+
+/-- Get the SSE connection manager -/
+def getSSEManager (s : Server) : Option SSE.ConnectionManager := s.sseManager
+
+/-- Check if a path matches an SSE route, returning the topic if matched -/
+private def matchSSERoute (s : Server) (path : String) : Option String :=
+  -- Remove query string from path
+  let cleanPath := path.splitOn "?" |>.head!
+  s.sseRoutes.findSome? fun (pattern, topic) =>
+    if pattern == cleanPath then some topic else none
+
+/-- Send HTTP response to client socket -/
+private def sendResponse (client : Socket) (resp : Response) : IO Unit := do
+  let data := serializeResponse resp
+  client.send data
+
+/-- SSE keep-alive loop: sends pings and detects disconnection -/
+private partial def sseKeepAliveLoop (client : Socket) (manager : SSE.ConnectionManager) (clientId : Nat) : IO Unit := do
+  IO.sleep 15000  -- 15 second heartbeat
+  try
+    SSE.sendPing client
+    sseKeepAliveLoop client manager clientId
+  catch _ =>
+    -- Client disconnected
+    manager.removeClient clientId
+
+/-- Handle an SSE connection - keeps connection open until client disconnects -/
+private def handleSSEConnection (s : Server) (client : Socket) (topic : String) : IO Unit := do
+  match s.sseManager with
+  | none =>
+    -- SSE not enabled, send error response
+    let resp := Response.internalError "SSE not enabled"
+    sendResponse client resp
+  | some manager =>
+    -- Send SSE headers
+    SSE.sendHeaders client
+
+    -- Register client with the connection manager
+    let clientId ← manager.addClient client topic
+
+    -- Send initial connection confirmation
+    SSE.sendConnected client
+
+    -- Start keep-alive loop (runs until client disconnects)
+    try
+      sseKeepAliveLoop client manager clientId
+    catch _ =>
+      -- Ensure cleanup on any error
+      manager.removeClient clientId
+
 /-- Handle a single request -/
 private def handleRequest (s : Server) (req : Request) : IO Response := do
   match s.router.findRoute req with
@@ -100,11 +162,6 @@ private def readRequest (client : Socket) : IO (Option Request) := do
 
   return none
 
-/-- Send HTTP response to client socket -/
-private def sendResponse (client : Socket) (resp : Response) : IO Unit := do
-  let data := serializeResponse resp
-  client.send data
-
 /-- Handle a client connection -/
 private def handleConnection (s : Server) (client : Socket) : IO Unit := do
   let mut keepAlive := true
@@ -112,24 +169,32 @@ private def handleConnection (s : Server) (client : Socket) : IO Unit := do
   while keepAlive do
     match ← readRequest client with
     | some req =>
-      -- Check Connection header
-      let connHeader := req.headers.get "Connection"
-      let isHttp10 := req.version.minor == 0
-      let closeRequested := connHeader == some "close"
-      let keepAliveRequested := connHeader == some "keep-alive"
+      -- Check if this is an SSE endpoint
+      match s.matchSSERoute req.path with
+      | some topic =>
+        -- This is an SSE request - handle specially (blocks until client disconnects)
+        s.handleSSEConnection client topic
+        keepAlive := false  -- Connection is done after SSE handler returns
+      | none =>
+        -- Regular HTTP request
+        -- Check Connection header
+        let connHeader := req.headers.get "Connection"
+        let isHttp10 := req.version.minor == 0
+        let closeRequested := connHeader == some "close"
+        let keepAliveRequested := connHeader == some "keep-alive"
 
-      keepAlive := if isHttp10 then keepAliveRequested else !closeRequested
+        keepAlive := if isHttp10 then keepAliveRequested else !closeRequested
 
-      -- Handle request
-      let resp ← s.handleRequest req
+        -- Handle request
+        let resp ← s.handleRequest req
 
-      -- Add Connection header if closing
-      let resp := if !keepAlive then
-        { resp with headers := resp.headers.add "Connection" "close" }
-      else
-        resp
+        -- Add Connection header if closing
+        let resp := if !keepAlive then
+          { resp with headers := resp.headers.add "Connection" "close" }
+        else
+          resp
 
-      sendResponse client resp
+        sendResponse client resp
 
     | none =>
       keepAlive := false

@@ -5,6 +5,7 @@
 
 import Citadel.Core
 import Citadel.Socket
+import Citadel.SSE
 import Citadel.Server
 
 -- Re-export Herald types for convenience
