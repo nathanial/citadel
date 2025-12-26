@@ -143,10 +143,10 @@ private def handleRequest (s : Server) (req : Request) : IO Response := do
 private def readRequest (client : Socket) : IO (Option Request) := do
   let mut buffer := ByteArray.empty
   let mut attempts := 0
-  let maxAttempts := 100
+  let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)
 
   while attempts < maxAttempts do
-    let chunk ← client.recv 4096
+    let chunk ← client.recv 16384  -- 16KB chunks for better performance
     if chunk.isEmpty then
       if buffer.isEmpty then
         return none  -- Client closed connection
