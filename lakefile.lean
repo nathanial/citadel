@@ -6,6 +6,7 @@ package citadel where
 
 require herald from ".." / "herald"
 require crucible from ".." / "crucible"
+require staple from ".." / "staple"
 
 @[default_target]
 lean_lib Citadel where

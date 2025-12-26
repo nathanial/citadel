@@ -3,6 +3,7 @@
   A simple website serving static HTML pages.
 -/
 import Citadel
+import Staple.Json
 
 open Citadel
 
@@ -254,12 +255,14 @@ def main : IO Unit := do
     -- API endpoint with path parameter
     |>.get "/api/users/:id" (fun req => do
       let id := req.param "id" |>.getD "unknown"
-      pure (Response.json s!"\{\"user_id\": \"{id}\", \"name\": \"User {id}\"}"))
+      let name := s!"User {id}"
+      pure (Response.json (jsonStr! { "user_id" : id, name })))
 
     -- POST endpoint
     |>.post "/api/echo" (fun req => do
       let body := req.bodyString
-      pure (Response.json s!"\{\"echoed\": \"{body}\"}"))
+      let echoed := body
+      pure (Response.json (jsonStr! { echoed })))
 
   IO.println "Routes:"
   IO.println "  GET  /           - Home page"

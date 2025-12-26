@@ -33,7 +33,7 @@ def main : IO Unit := do
 
   server.get "/users/:id" fun req => do
     let id := req.params.get! "id"
-    Response.json s!"\{\"id\": \"{id}\"}"
+    Response.json (jsonStr! { id })
 
   server.run
 ```
