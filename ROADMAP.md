@@ -45,12 +45,25 @@ Socket timeouts are hardcoded to 5 seconds in C code instead of using config val
 
 Added 14 query string tests covering edge cases.
 
-### Form Data Parsing
-Support common form submission formats:
-- `application/x-www-form-urlencoded` parsing
-- `multipart/form-data` parsing for file uploads
-- `ServerRequest.formField : String → Option String`
-- `ServerRequest.formFile : String → Option FormFile`
+### ~~Form Data Parsing~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Core.lean:123-286`
+
+~~Support common form submission formats.~~
+
+**Implemented:**
+- `FormFile` structure with `filename`, `contentType`, and `data` fields
+- `FormData` structure with `fields` and `files` lists
+- `parseUrlEncodedForm` - Parse `application/x-www-form-urlencoded` bodies
+- `parseMultipartForm` - Parse `multipart/form-data` with file uploads
+- `ServerRequest.formData` - Get parsed form data
+- `ServerRequest.formField : String → Option String` - Get a form field
+- `ServerRequest.formFieldAll : String → List String` - All values for a field
+- `ServerRequest.formFile : String → Option FormFile` - Get an uploaded file
+- `ServerRequest.formFileAll : String → List FormFile` - All files for a field
+- `ServerRequest.contentType` - Get Content-Type header
+- `ServerRequest.hasFormData` - Check if request has form data
+
+Added 14 form data tests covering urlencoded and multipart parsing.
 
 ### Additional HTTP Method Helpers
 **Files:** `Citadel/Core.lean`

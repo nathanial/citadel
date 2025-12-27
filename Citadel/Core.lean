@@ -120,6 +120,175 @@ def queryParam (r : ServerRequest) (name : String) : Option String :=
 def queryParamAll (r : ServerRequest) (name : String) : List String :=
   r.queryParams.filterMap fun (k, v) => if k == name then some v else none
 
+-- ============================================================================
+-- Form Data Parsing
+-- ============================================================================
+
+/-- An uploaded file from a multipart form -/
+structure FormFile where
+  /-- Original filename from the client -/
+  filename : String
+  /-- Content-Type of the file -/
+  contentType : String
+  /-- Raw file data -/
+  data : ByteArray
+  deriving Inhabited
+
+instance : Repr FormFile where
+  reprPrec f _ := s!"FormFile(filename={repr f.filename}, contentType={repr f.contentType}, size={f.data.size})"
+
+/-- Parsed form data containing fields and files -/
+structure FormData where
+  /-- Text fields (name → value) -/
+  fields : List (String × String) := []
+  /-- Uploaded files (name → file) -/
+  files : List (String × FormFile) := []
+  deriving Inhabited
+
+instance : Repr FormData where
+  reprPrec fd _ := s!"FormData(fields={repr fd.fields}, files={fd.files.length} files)"
+
+namespace FormData
+
+/-- Empty form data -/
+def empty : FormData := {}
+
+/-- Get a field value by name -/
+def field (fd : FormData) (name : String) : Option String :=
+  fd.fields.lookup name
+
+/-- Get all values for a field (for repeated fields) -/
+def fieldAll (fd : FormData) (name : String) : List String :=
+  fd.fields.filterMap fun (k, v) => if k == name then some v else none
+
+/-- Get an uploaded file by name -/
+def file (fd : FormData) (name : String) : Option FormFile :=
+  fd.files.lookup name
+
+/-- Get all uploaded files for a field (for multiple file uploads) -/
+def fileAll (fd : FormData) (name : String) : List FormFile :=
+  fd.files.filterMap fun (k, v) => if k == name then some v else none
+
+end FormData
+
+/-- Parse application/x-www-form-urlencoded body -/
+def parseUrlEncodedForm (body : String) : FormData :=
+  { fields := parseQueryString body }
+
+/-- Extract the boundary from a multipart content-type header -/
+private def extractBoundary (contentType : String) : Option String :=
+  -- Content-Type: multipart/form-data; boundary=----WebKitFormBoundary...
+  let parts := contentType.splitOn "boundary="
+  match parts with
+  | _ :: rest :: _ => some (rest.splitOn ";").head!.trim
+  | _ => none
+
+/-- Parse a header line into name and value -/
+private def parseHeaderLine (line : String) : Option (String × String) :=
+  match line.splitOn ": " with
+  | name :: rest => some (name.toLower, String.intercalate ": " rest)
+  | _ => none
+
+/-- Extract a parameter from a header value like 'form-data; name="field"; filename="file.txt"' -/
+private def extractHeaderParam (headerValue : String) (param : String) : Option String :=
+  let parts := headerValue.splitOn "; "
+  parts.findSome? fun part =>
+    let kv := part.splitOn "="
+    match kv with
+    | [k, v] =>
+      if k.trim == param then
+        -- Remove surrounding quotes if present
+        let v := v.trim
+        if v.startsWith "\"" && v.endsWith "\"" then
+          some (v.drop 1 |>.dropRight 1)
+        else
+          some v
+      else none
+    | _ => none
+
+/-- Parse multipart/form-data body -/
+def parseMultipartForm (body : ByteArray) (boundary : String) : FormData :=
+  let bodyStr := String.fromUTF8! body
+  let delimiter := "--" ++ boundary
+  let parts := bodyStr.splitOn delimiter
+    |>.filter fun p => p.trim != "" && p.trim != "--"
+
+  parts.foldl (init := FormData.empty) fun acc part =>
+    -- Each part has headers followed by \r\n\r\n and then content
+    let part := if part.startsWith "\r\n" then part.drop 2 else part
+    match part.splitOn "\r\n\r\n" with
+    | headerSection :: contentParts =>
+      let content := String.intercalate "\r\n\r\n" contentParts
+      -- Remove trailing \r\n from content
+      let content := if content.endsWith "\r\n" then content.dropRight 2 else content
+
+      -- Parse headers
+      let headerLines := headerSection.splitOn "\r\n" |>.filter (· != "")
+      let headers := headerLines.filterMap parseHeaderLine
+
+      -- Get Content-Disposition header
+      match headers.lookup "content-disposition" with
+      | some disposition =>
+        let name := extractHeaderParam disposition "name" |>.getD ""
+        let filename := extractHeaderParam disposition "filename"
+        let contentType := headers.lookup "content-type" |>.getD "application/octet-stream"
+
+        match filename with
+        | some fname =>
+          -- This is a file upload
+          let file : FormFile := {
+            filename := fname
+            contentType := contentType
+            data := content.toUTF8
+          }
+          { acc with files := acc.files ++ [(name, file)] }
+        | none =>
+          -- This is a regular field
+          { acc with fields := acc.fields ++ [(name, content)] }
+      | none => acc
+    | _ => acc
+
+/-- Get the Content-Type header value -/
+def contentType (r : ServerRequest) : Option String :=
+  r.header "Content-Type"
+
+/-- Check if the request has form data -/
+def hasFormData (r : ServerRequest) : Bool :=
+  match r.contentType with
+  | some ct => ct.startsWith "application/x-www-form-urlencoded" ||
+               ct.startsWith "multipart/form-data"
+  | none => false
+
+/-- Parse form data from the request body -/
+def formData (r : ServerRequest) : FormData :=
+  match r.contentType with
+  | some ct =>
+    if ct.startsWith "application/x-www-form-urlencoded" then
+      parseUrlEncodedForm r.bodyString
+    else if ct.startsWith "multipart/form-data" then
+      match extractBoundary ct with
+      | some boundary => parseMultipartForm r.body boundary
+      | none => FormData.empty
+    else
+      FormData.empty
+  | none => FormData.empty
+
+/-- Get a form field value by name -/
+def formField (r : ServerRequest) (name : String) : Option String :=
+  r.formData.field name
+
+/-- Get all values for a form field -/
+def formFieldAll (r : ServerRequest) (name : String) : List String :=
+  r.formData.fieldAll name
+
+/-- Get an uploaded file by name -/
+def formFile (r : ServerRequest) (name : String) : Option FormFile :=
+  r.formData.file name
+
+/-- Get all uploaded files for a field -/
+def formFileAll (r : ServerRequest) (name : String) : List FormFile :=
+  r.formData.fileAll name
+
 end ServerRequest
 
 /-- Response builder for convenient response construction -/

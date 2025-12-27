@@ -527,6 +527,158 @@ test "query handles multiple question marks" := do
   req.query ≡ "q=what?&foo=bar"
   req.queryParam "q" ≡ some "what?"
 
+-- ============================================================================
+-- Form Data Tests
+-- ============================================================================
+
+testSuite "FormData"
+
+test "parseUrlEncodedForm parses simple fields" := do
+  let fd := ServerRequest.parseUrlEncodedForm "name=John&age=30"
+  fd.field "name" ≡ some "John"
+  fd.field "age" ≡ some "30"
+
+test "parseUrlEncodedForm handles URL encoding" := do
+  let fd := ServerRequest.parseUrlEncodedForm "name=John+Doe&city=New%20York"
+  fd.field "name" ≡ some "John Doe"
+  fd.field "city" ≡ some "New York"
+
+test "parseUrlEncodedForm handles empty values" := do
+  let fd := ServerRequest.parseUrlEncodedForm "flag&name=test"
+  fd.field "flag" ≡ some ""
+  fd.field "name" ≡ some "test"
+
+test "formField returns field from urlencoded body" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/submit"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "application/x-www-form-urlencoded"
+      body := "username=alice&password=secret".toUTF8
+    }
+  }
+  req.formField "username" ≡ some "alice"
+  req.formField "password" ≡ some "secret"
+  req.formField "missing" ≡ none
+
+test "formFieldAll returns all values for repeated field" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/submit"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "application/x-www-form-urlencoded"
+      body := "tag=rust&tag=lean&tag=haskell".toUTF8
+    }
+  }
+  let tags := req.formFieldAll "tag"
+  tags.length ≡ 3
+  tags ≡ ["rust", "lean", "haskell"]
+
+test "hasFormData returns true for urlencoded" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/submit"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "application/x-www-form-urlencoded"
+      body := "name=test".toUTF8
+    }
+  }
+  shouldSatisfy req.hasFormData "should have form data"
+
+test "hasFormData returns true for multipart" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/upload"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "multipart/form-data; boundary=----WebKitBoundary"
+      body := ByteArray.empty
+    }
+  }
+  shouldSatisfy req.hasFormData "should have form data"
+
+test "hasFormData returns false for json" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/api"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "application/json"
+      body := "{}".toUTF8
+    }
+  }
+  shouldSatisfy (!req.hasFormData) "should not have form data"
+
+test "contentType returns Content-Type header" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/submit"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "text/plain"
+      body := ByteArray.empty
+    }
+  }
+  req.contentType ≡ some "text/plain"
+
+test "parseMultipartForm parses text fields" := do
+  let boundary := "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+  let body := s!"------WebKitFormBoundary7MA4YWxkTrZu0gW\r\nContent-Disposition: form-data; name=\"username\"\r\n\r\njohn_doe\r\n------WebKitFormBoundary7MA4YWxkTrZu0gW\r\nContent-Disposition: form-data; name=\"email\"\r\n\r\njohn@example.com\r\n------WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n"
+  let fd := ServerRequest.parseMultipartForm body.toUTF8 boundary
+  fd.field "username" ≡ some "john_doe"
+  fd.field "email" ≡ some "john@example.com"
+
+test "parseMultipartForm parses file uploads" := do
+  let boundary := "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+  let body := s!"------WebKitFormBoundary7MA4YWxkTrZu0gW\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\nHello, World!\r\n------WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n"
+  let fd := ServerRequest.parseMultipartForm body.toUTF8 boundary
+  match fd.file "file" with
+  | some f =>
+    f.filename ≡ "test.txt"
+    f.contentType ≡ "text/plain"
+    shouldSatisfy (f.data == "Hello, World!".toUTF8) "file data should match"
+  | none => throw (IO.userError "Expected file")
+
+test "formFile returns uploaded file" := do
+  let boundary := "----boundary123"
+  let body := s!"------boundary123\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\nJPEG_DATA\r\n------boundary123--\r\n"
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/upload"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" s!"multipart/form-data; boundary={boundary}"
+      body := body.toUTF8
+    }
+  }
+  match req.formFile "avatar" with
+  | some f =>
+    f.filename ≡ "photo.jpg"
+    f.contentType ≡ "image/jpeg"
+  | none => throw (IO.userError "Expected file")
+
+test "FormData.empty has no fields or files" := do
+  let fd := ServerRequest.FormData.empty
+  fd.fields.length ≡ 0
+  fd.files.length ≡ 0
+
+test "formData returns empty for non-form content" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.POST
+      path := "/api"
+      version := Version.http11
+      headers := Headers.empty.add "Content-Type" "application/json"
+      body := "{\"key\": \"value\"}".toUTF8
+    }
+  }
+  let fd := req.formData
+  fd.fields.length ≡ 0
+  fd.files.length ≡ 0
+
 #generate_tests
 
 -- Main entry point
