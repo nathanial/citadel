@@ -211,6 +211,17 @@ test "serviceUnavailable response with Retry-After" := do
   resp.status.code ≡ 503
   resp.headers.get "Retry-After" ≡ some "120"
 
+test "requestTimeout response" := do
+  let resp := Response.requestTimeout
+  resp.status.code ≡ 408
+  shouldSatisfy (resp.body == "Request Timeout".toUTF8) "body should be Request Timeout"
+  resp.headers.get "Connection" ≡ some "close"
+
+test "requestTimeout response with custom message" := do
+  let resp := Response.requestTimeout "The request took too long"
+  resp.status.code ≡ 408
+  shouldSatisfy (resp.body == "The request took too long".toUTF8) "body should be custom message"
+
 test "response has content length" := do
   let resp := Response.ok "Hello, World!"
   resp.headers.get "Content-Length" ≡ some "13"
@@ -278,7 +289,7 @@ test "router extracts path params" := do
   resp.status.code ≡ 200
   shouldSatisfy (resp.body == "42".toUTF8) "body should be 42"
 
-test "router wrong method returns 404" := do
+test "router wrong method returns 405" := do
   let router := Router.empty
     |>.get "/users" (fun _ => pure (Response.ok ""))
   let req : Request := {
@@ -289,7 +300,60 @@ test "router wrong method returns 404" := do
     body := ByteArray.empty
   }
   let resp ← router.handle req
+  resp.status.code ≡ 405
+  -- Check that Allow header is set
+  resp.headers.get "Allow" ≡ some "GET"
+
+test "router wrong method returns 405 with multiple allowed methods" := do
+  let router := Router.empty
+    |>.get "/users" (fun _ => pure (Response.ok ""))
+    |>.post "/users" (fun _ => pure (Response.created))
+    |>.delete "/users" (fun _ => pure (Response.noContent))
+  let req : Request := {
+    method := Method.PUT
+    path := "/users"
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  let resp ← router.handle req
+  resp.status.code ≡ 405
+  -- Check that Allow header contains all methods
+  match resp.headers.get "Allow" with
+  | some allow =>
+    shouldSatisfy (containsSubstr allow "GET") "should contain GET"
+    shouldSatisfy (containsSubstr allow "POST") "should contain POST"
+    shouldSatisfy (containsSubstr allow "DELETE") "should contain DELETE"
+  | none => throw (IO.userError "Expected Allow header")
+
+test "router no match returns 404" := do
+  let router := Router.empty
+    |>.get "/users" (fun _ => pure (Response.ok ""))
+  let req : Request := {
+    method := Method.GET
+    path := "/posts"
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  let resp ← router.handle req
   resp.status.code ≡ 404
+
+test "findMethodsForPath returns methods for matching path" := do
+  let router := Router.empty
+    |>.get "/api/items" (fun _ => pure (Response.ok ""))
+    |>.post "/api/items" (fun _ => pure (Response.created))
+    |>.delete "/api/items/:id" (fun _ => pure (Response.noContent))
+  let methods := router.findMethodsForPath "/api/items"
+  methods.length ≡ 2
+  shouldSatisfy (methods.contains Method.GET) "should contain GET"
+  shouldSatisfy (methods.contains Method.POST) "should contain POST"
+
+test "findMethodsForPath returns empty for non-matching path" := do
+  let router := Router.empty
+    |>.get "/users" (fun _ => pure (Response.ok ""))
+  let methods := router.findMethodsForPath "/posts"
+  methods.length ≡ 0
 
 test "router matches HEAD route" := do
   let router := Router.empty

@@ -13,17 +13,17 @@ This roadmap outlines improvements, bug fixes, and new features for the Citadel 
 
 **Fixed:** `handleRequest()` now applies the middleware chain via `Middleware.chain s.middleware route.handler`. Added 4 middleware tests to verify correct behavior.
 
-### Configuration Fields Unused
+### ~~Configuration Fields Unused~~ ⚠️ PARTIALLY FIXED
 **Files:** `Citadel/Core.lean:19-23`, `ffi/socket.c:69-72`
 
-Several `ServerConfig` fields are defined but never enforced:
-- `maxBodySize` - Request body size limits not checked
+~~Several `ServerConfig` fields are defined but never enforced:~~
+- ~~`maxBodySize` - Request body size limits not checked~~ ✅ **FIXED** - Now enforced in `readRequest`
 - `keepAliveTimeout` - Not applied to connections
 - `requestTimeout` - Not applied to request handling
 
 Socket timeouts are hardcoded to 5 seconds in C code instead of using config values.
 
-**Fix:** Pass config to socket layer; enforce limits in server loop.
+**Remaining:** Pass `keepAliveTimeout` and `requestTimeout` to socket layer.
 
 ---
 
@@ -120,14 +120,20 @@ Added 11 cookie tests covering parsing and setting.
 
 ## Error Handling
 
-### Protocol Error Responses
-**Files:** `Citadel/Core.lean:282`
+### ~~Protocol Error Responses~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Core.lean`, `Citadel/Server.lean`
 
-Currently parse errors return generic 404. Implement proper HTTP error responses:
-- 400 Bad Request for malformed requests
-- 405 Method Not Allowed when route exists but method doesn't match
-- 413 Payload Too Large when body exceeds `maxBodySize`
-- 408 Request Timeout when request takes too long
+~~Currently parse errors return generic 404. Implement proper HTTP error responses:~~
+
+**Implemented:**
+- `Response.badRequest` (400) - Sent for malformed HTTP requests (parse errors)
+- `Response.methodNotAllowed` (405) - Sent when route path matches but method doesn't; includes `Allow` header with allowed methods
+- `Response.payloadTooLarge` (413) - Sent when request body exceeds `maxBodySize` config
+- `Response.requestTimeout` (408) - Sent when request read times out; includes `Connection: close` header
+- `Router.findMethodsForPath` - New helper to find allowed methods for a path
+- `ReadResult` enum - Distinguishes success, connectionClosed, parseError, payloadTooLarge, timeout
+
+Added 6 tests for protocol error responses.
 
 ### Request Validation
 Add validation layer:

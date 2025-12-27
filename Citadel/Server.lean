@@ -228,11 +228,26 @@ private def handleRequest (s : Server) (req : Request) : IO Response := do
       IO.eprintln s!"[REQ] Handler error: {e}"
       pure (Response.internalError)
   | none =>
-    IO.println s!"[REQ] {req.method} {req.path} -> 404"
-    pure (Response.notFound)
+    -- Check if path matches but method doesn't
+    let allowedMethods := s.router.findMethodsForPath req.path
+    if allowedMethods.isEmpty then
+      IO.println s!"[REQ] {req.method} {req.path} -> 404"
+      pure (Response.notFound)
+    else
+      let methodStrs := allowedMethods.map fun m => m.toString
+      IO.println s!"[REQ] {req.method} {req.path} -> 405 (allowed: {String.intercalate ", " methodStrs})"
+      pure (Response.methodNotAllowed methodStrs)
+
+/-- Result of reading a request from the socket -/
+inductive ReadResult where
+  | success (req : Request)
+  | connectionClosed
+  | parseError
+  | payloadTooLarge
+  | timeout
 
 /-- Read HTTP request from client socket -/
-private def readRequest (client : Socket) : IO (Option Request) := do
+private def readRequest (client : Socket) (config : ServerConfig) : IO ReadResult := do
   let mut buffer := ByteArray.empty
   let mut attempts := 0
   let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)
@@ -240,24 +255,27 @@ private def readRequest (client : Socket) : IO (Option Request) := do
   while attempts < maxAttempts do
     let chunk ← client.recv 16384  -- 16KB chunks for better performance
     if chunk.isEmpty then
-      return none  -- Client closed connection (recv returned 0)
+      return .connectionClosed  -- Client closed connection (recv returned 0)
     else
       buffer := buffer ++ chunk
+      -- Check body size limit
+      if buffer.size > config.maxBodySize then
+        return .payloadTooLarge
       -- Try to parse
       match Herald.parseRequest buffer with
-      | .ok result => return some result.request
+      | .ok result => return .success result.request
       | .error .incomplete => attempts := attempts + 1  -- Wait for more data
-      | .error _ => return none  -- Parse error
+      | .error _ => return .parseError
 
-  return none
+  return .timeout  -- Exceeded max attempts
 
 /-- Handle a client connection -/
 private def handleConnection (s : Server) (client : Socket) : IO Unit := do
   let mut keepAlive := true
 
   while keepAlive do
-    match ← readRequest client with
-    | some req =>
+    match ← readRequest client s.config with
+    | .success req =>
       -- Check if this is an SSE endpoint
       match s.matchSSERoute req.path with
       | some topic =>
@@ -285,7 +303,22 @@ private def handleConnection (s : Server) (client : Socket) : IO Unit := do
 
         sendResponse client resp
 
-    | none =>
+    | .connectionClosed =>
+      keepAlive := false
+
+    | .parseError =>
+      IO.eprintln "[CONN] Parse error, sending 400 Bad Request"
+      sendResponse client (Response.badRequest "Malformed HTTP request")
+      keepAlive := false
+
+    | .payloadTooLarge =>
+      IO.eprintln s!"[CONN] Payload exceeds {s.config.maxBodySize} bytes, sending 413"
+      sendResponse client (Response.payloadTooLarge)
+      keepAlive := false
+
+    | .timeout =>
+      IO.eprintln "[CONN] Request timeout, sending 408"
+      sendResponse client (Response.requestTimeout)
       keepAlive := false
 
   client.close

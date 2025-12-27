@@ -543,6 +543,14 @@ def tooManyRequests (retryAfter : Option Nat := none) : Response :=
     | none => builder
   builder.build
 
+/-- Create a 408 Request Timeout response -/
+def requestTimeout (message : String := "Request Timeout") : Response :=
+  ResponseBuilder.withStatus { code := 408 }
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.withHeader "Connection" "close"
+    |>.build
+
 /-- Create a 500 Internal Server Error response -/
 def internalError (message : String := "Internal Server Error") : Response :=
   ResponseBuilder.withStatus StatusCode.internalServerError
@@ -679,6 +687,13 @@ def findRoute (r : Router) (req : Request) : Option (Route × Params) :=
     else
       none
 
+/-- Find all routes that match a path (ignoring method) and return their methods -/
+def findMethodsForPath (r : Router) (path : String) : List Method :=
+  r.routes.filterMap fun route =>
+    match route.pattern.match_ path with
+    | some _ => some route.method
+    | none => none
+
 /-- Handle a request, returning a response -/
 def handle (r : Router) (req : Request) : IO Response := do
   match r.findRoute req with
@@ -686,7 +701,13 @@ def handle (r : Router) (req : Request) : IO Response := do
     let serverReq : ServerRequest := { request := req, params }
     route.handler serverReq
   | none =>
-    pure (Response.notFound)
+    -- Check if path matches but method doesn't
+    let allowedMethods := r.findMethodsForPath req.path
+    if allowedMethods.isEmpty then
+      pure (Response.notFound)
+    else
+      let methodStrs := allowedMethods.map fun m => m.toString
+      pure (Response.methodNotAllowed methodStrs)
 
 end Router
 
