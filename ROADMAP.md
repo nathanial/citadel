@@ -4,17 +4,6 @@ This roadmap outlines improvements, bug fixes, and new features for the Citadel 
 
 ---
 
-## Error Handling
-
-### Request Validation
-Add validation layer:
-- Header count limits
-- Header size limits
-- URI length limits
-- Invalid character detection
-
----
-
 ## Test Coverage
 
 ### Integration Tests

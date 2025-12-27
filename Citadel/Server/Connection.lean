@@ -27,6 +27,8 @@ inductive ReadResult where
   | parseError
   | payloadTooLarge
   | timeout
+  | uriTooLong
+  | headerValidationFailed (msg : String)
 
 namespace Connection
 
@@ -60,7 +62,19 @@ def readRequest (client : Socket) (config : ServerConfig) : IO ReadResult := do
         return .payloadTooLarge
       -- Try to parse
       match Herald.parseRequest buffer with
-      | .ok result => return .success result.request
+      | .ok result =>
+        -- Validate the parsed request
+        match validateRequest result.request config with
+        | some (.uriTooLong _ _) => return .uriTooLong
+        | some (.tooManyHeaders count limit) =>
+          return .headerValidationFailed s!"Too many headers: {count} (limit: {limit})"
+        | some (.headerTooLarge name size limit) =>
+          return .headerValidationFailed s!"Header '{name}' too large: {size} bytes (limit: {limit})"
+        | some (.totalHeadersTooLarge size limit) =>
+          return .headerValidationFailed s!"Total headers too large: {size} bytes (limit: {limit})"
+        | some (.invalidUriCharacter c) =>
+          return .headerValidationFailed s!"Invalid character in URI: {repr c}"
+        | none => return .success result.request
       | .error .incomplete => attempts := attempts + 1  -- Wait for more data
       | .error _ => return .parseError
 
@@ -86,7 +100,19 @@ def readRequestAny (client : AnySocket) (config : ServerConfig) : IO ReadResult 
         return .payloadTooLarge
       -- Try to parse
       match Herald.parseRequest buffer with
-      | .ok result => return .success result.request
+      | .ok result =>
+        -- Validate the parsed request
+        match validateRequest result.request config with
+        | some (.uriTooLong _ _) => return .uriTooLong
+        | some (.tooManyHeaders count limit) =>
+          return .headerValidationFailed s!"Too many headers: {count} (limit: {limit})"
+        | some (.headerTooLarge name size limit) =>
+          return .headerValidationFailed s!"Header '{name}' too large: {size} bytes (limit: {limit})"
+        | some (.totalHeadersTooLarge size limit) =>
+          return .headerValidationFailed s!"Total headers too large: {size} bytes (limit: {limit})"
+        | some (.invalidUriCharacter c) =>
+          return .headerValidationFailed s!"Invalid character in URI: {repr c}"
+        | none => return .success result.request
       | .error .incomplete => attempts := attempts + 1  -- Wait for more data
       | .error _ => return .parseError
 

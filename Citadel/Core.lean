@@ -31,7 +31,64 @@ structure ServerConfig where
   requestTimeout : Nat := 30
   /-- TLS configuration (None = HTTP, Some = HTTPS) -/
   tls : Option TlsConfig := none
+  /-- Maximum URI length in bytes -/
+  maxUriLength : Nat := 8192  -- 8KB
+  /-- Maximum number of headers -/
+  maxHeaderCount : Nat := 100
+  /-- Maximum size of a single header (name + value) in bytes -/
+  maxHeaderSize : Nat := 8192  -- 8KB
+  /-- Maximum total size of all headers in bytes -/
+  maxTotalHeaderSize : Nat := 65536  -- 64KB
   deriving Repr, Inhabited
+
+-- ============================================================================
+-- Request Validation
+-- ============================================================================
+
+/-- Validation error types -/
+inductive ValidationError where
+  | uriTooLong (length : Nat) (limit : Nat)
+  | tooManyHeaders (count : Nat) (limit : Nat)
+  | headerTooLarge (name : String) (size : Nat) (limit : Nat)
+  | totalHeadersTooLarge (size : Nat) (limit : Nat)
+  | invalidUriCharacter (char : Char)
+  deriving Repr, BEq
+
+/-- Check if a character is valid in a URI (printable ASCII or UTF-8 high bytes) -/
+def isValidUriChar (c : Char) : Bool :=
+  let n := c.toNat
+  -- Printable ASCII (space 0x20 through tilde 0x7E) or UTF-8 continuation bytes (0x80+)
+  (n >= 0x20 && n <= 0x7E) || n >= 0x80
+
+/-- Validate a request against configuration limits.
+    Returns `none` if valid, or `some error` describing the validation failure. -/
+def validateRequest (req : Request) (config : ServerConfig) : Option ValidationError := Id.run do
+  -- Check URI length
+  if req.path.length > config.maxUriLength then
+    return some (.uriTooLong req.path.length config.maxUriLength)
+
+  -- Check for invalid URI characters (control characters)
+  for c in req.path.toList do
+    if !isValidUriChar c then
+      return some (.invalidUriCharacter c)
+
+  -- Check header count
+  let headerList := req.headers.toList
+  if headerList.length > config.maxHeaderCount then
+    return some (.tooManyHeaders headerList.length config.maxHeaderCount)
+
+  -- Check individual header sizes and total size
+  let mut totalSize := 0
+  for h in headerList do
+    let headerSize := h.name.length + h.value.length + 2  -- +2 for ": "
+    if headerSize > config.maxHeaderSize then
+      return some (.headerTooLarge h.name headerSize config.maxHeaderSize)
+    totalSize := totalSize + headerSize
+
+  if totalSize > config.maxTotalHeaderSize then
+    return some (.totalHeadersTooLarge totalSize config.maxTotalHeaderSize)
+
+  return none
 
 /-- Path parameters extracted from route matching -/
 abbrev Params := List (String × String)
@@ -583,6 +640,20 @@ def redirect (location : String) (permanent : Bool := false) : Response :=
   let status := if permanent then StatusCode.movedPermanently else StatusCode.found
   ResponseBuilder.withStatus status
     |>.withHeader "Location" location
+    |>.build
+
+/-- Create a 414 URI Too Long response -/
+def uriTooLong (message : String := "URI Too Long") : Response :=
+  ResponseBuilder.withStatus { code := 414 }
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.build
+
+/-- Create a 431 Request Header Fields Too Large response -/
+def headerFieldsTooLarge (message : String := "Request Header Fields Too Large") : Response :=
+  ResponseBuilder.withStatus { code := 431 }
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
     |>.build
 
 end Response

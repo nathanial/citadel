@@ -206,6 +206,16 @@ private def handleConnection (s : Server) (client : Socket) : IO Unit := do
       sendResponse client (Response.requestTimeout)
       keepAlive := false
 
+    | .uriTooLong =>
+      IO.eprintln "[CONN] URI too long, sending 414"
+      sendResponse client (Response.uriTooLong)
+      keepAlive := false
+
+    | .headerValidationFailed msg =>
+      IO.eprintln s!"[CONN] Header validation failed: {msg}, sending 431"
+      sendResponse client (Response.headerFieldsTooLarge msg)
+      keepAlive := false
+
   client.close
 
 /-- Handle a TLS client connection (SSE not supported over TLS for now) -/
@@ -258,6 +268,16 @@ private def handleTlsConnection (s : Server) (client : TlsSocket) : IO Unit := d
     | .timeout =>
       IO.eprintln "[TLS] Request timeout, sending 408"
       sendResponseAny anyClient (Response.requestTimeout)
+      keepAlive := false
+
+    | .uriTooLong =>
+      IO.eprintln "[TLS] URI too long, sending 414"
+      sendResponseAny anyClient (Response.uriTooLong)
+      keepAlive := false
+
+    | .headerValidationFailed msg =>
+      IO.eprintln s!"[TLS] Header validation failed: {msg}, sending 431"
+      sendResponseAny anyClient (Response.headerFieldsTooLarge msg)
       keepAlive := false
 
   client.close

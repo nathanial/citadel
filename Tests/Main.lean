@@ -222,6 +222,26 @@ test "requestTimeout response with custom message" := do
   resp.status.code ≡ 408
   shouldSatisfy (resp.body == "The request took too long".toUTF8) "body should be custom message"
 
+test "uriTooLong response" := do
+  let resp := Response.uriTooLong
+  resp.status.code ≡ 414
+  shouldSatisfy (resp.body == "URI Too Long".toUTF8) "body should be URI Too Long"
+
+test "uriTooLong response with custom message" := do
+  let resp := Response.uriTooLong "The URI is way too long"
+  resp.status.code ≡ 414
+  shouldSatisfy (resp.body == "The URI is way too long".toUTF8) "body should be custom message"
+
+test "headerFieldsTooLarge response" := do
+  let resp := Response.headerFieldsTooLarge
+  resp.status.code ≡ 431
+  shouldSatisfy (resp.body == "Request Header Fields Too Large".toUTF8) "body should match"
+
+test "headerFieldsTooLarge response with custom message" := do
+  let resp := Response.headerFieldsTooLarge "Too many cookies!"
+  resp.status.code ≡ 431
+  shouldSatisfy (resp.body == "Too many cookies!".toUTF8) "body should be custom message"
+
 test "response has content length" := do
   let resp := Response.ok "Hello, World!"
   resp.headers.get "Content-Length" ≡ some "13"
@@ -433,6 +453,165 @@ test "custom config values" := do
   config.port ≡ 3000
   config.host ≡ "0.0.0.0"
   config.maxBodySize ≡ 1024
+
+test "default validation config values" := do
+  let config : ServerConfig := {}
+  config.maxUriLength ≡ 8192
+  config.maxHeaderCount ≡ 100
+  config.maxHeaderSize ≡ 8192
+  config.maxTotalHeaderSize ≡ 65536
+
+test "custom validation config values" := do
+  let config : ServerConfig := {
+    maxUriLength := 1024
+    maxHeaderCount := 50
+    maxHeaderSize := 4096
+    maxTotalHeaderSize := 32768
+  }
+  config.maxUriLength ≡ 1024
+  config.maxHeaderCount ≡ 50
+  config.maxHeaderSize ≡ 4096
+  config.maxTotalHeaderSize ≡ 32768
+
+-- ============================================================================
+-- Request Validation Tests
+-- ============================================================================
+
+testSuite "RequestValidation"
+
+test "isValidUriChar accepts printable ASCII" := do
+  shouldSatisfy (isValidUriChar 'a') "lowercase letter"
+  shouldSatisfy (isValidUriChar 'Z') "uppercase letter"
+  shouldSatisfy (isValidUriChar '0') "digit"
+  shouldSatisfy (isValidUriChar '/') "slash"
+  shouldSatisfy (isValidUriChar '?') "question mark"
+  shouldSatisfy (isValidUriChar '&') "ampersand"
+  shouldSatisfy (isValidUriChar '=') "equals"
+  shouldSatisfy (isValidUriChar '-') "hyphen"
+  shouldSatisfy (isValidUriChar '_') "underscore"
+  shouldSatisfy (isValidUriChar '.') "period"
+  shouldSatisfy (isValidUriChar ' ') "space"
+
+test "isValidUriChar rejects control characters" := do
+  shouldSatisfy (!isValidUriChar '\x00') "null rejected"
+  shouldSatisfy (!isValidUriChar '\x01') "SOH rejected"
+  shouldSatisfy (!isValidUriChar '\x1F') "unit separator rejected"
+  shouldSatisfy (!isValidUriChar '\x7F') "DEL rejected"
+
+test "validateRequest passes valid request" := do
+  let config : ServerConfig := {}
+  let req : Request := {
+    method := Method.GET
+    path := "/users/123?foo=bar"
+    version := Version.http11
+    headers := Headers.empty |>.add "Host" "example.com"
+    body := ByteArray.empty
+  }
+  shouldSatisfy (validateRequest req config == none) "valid request should pass"
+
+test "validateRequest rejects long URI" := do
+  let config : ServerConfig := { maxUriLength := 10 }
+  let req : Request := {
+    method := Method.GET
+    path := "/this/path/is/way/too/long"
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  match validateRequest req config with
+  | some (.uriTooLong len limit) =>
+    shouldSatisfy (len > limit) "length exceeds limit"
+  | _ => throw <| IO.userError "expected uriTooLong error"
+
+test "validateRequest rejects control character in URI" := do
+  let config : ServerConfig := {}
+  let req : Request := {
+    method := Method.GET
+    path := "/path\x00with\x01nulls"
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  match validateRequest req config with
+  | some (.invalidUriCharacter c) =>
+    shouldSatisfy (c.toNat < 0x20) "should be control character"
+  | _ => throw <| IO.userError "expected invalidUriCharacter error"
+
+test "validateRequest rejects too many headers" := do
+  let config : ServerConfig := { maxHeaderCount := 2 }
+  let headers := Headers.empty
+    |>.add "Header1" "value1"
+    |>.add "Header2" "value2"
+    |>.add "Header3" "value3"
+  let req : Request := {
+    method := Method.GET
+    path := "/test"
+    version := Version.http11
+    headers := headers
+    body := ByteArray.empty
+  }
+  match validateRequest req config with
+  | some (.tooManyHeaders count limit) =>
+    shouldSatisfy (count > limit) "count exceeds limit"
+  | _ => throw <| IO.userError "expected tooManyHeaders error"
+
+test "validateRequest rejects oversized header" := do
+  let config : ServerConfig := { maxHeaderSize := 20 }
+  let longValue := String.join (List.replicate 30 "x")
+  let headers := Headers.empty |>.add "X-Long" longValue
+  let req : Request := {
+    method := Method.GET
+    path := "/test"
+    version := Version.http11
+    headers := headers
+    body := ByteArray.empty
+  }
+  match validateRequest req config with
+  | some (.headerTooLarge name _ _) =>
+    shouldSatisfy (name == "X-Long") "header name should match"
+  | _ => throw <| IO.userError "expected headerTooLarge error"
+
+test "validateRequest rejects excessive total header size" := do
+  let config : ServerConfig := { maxTotalHeaderSize := 50 }
+  let headers := Headers.empty
+    |>.add "Header1" "this is a moderately long value"
+    |>.add "Header2" "this is another moderately long value"
+  let req : Request := {
+    method := Method.GET
+    path := "/test"
+    version := Version.http11
+    headers := headers
+    body := ByteArray.empty
+  }
+  match validateRequest req config with
+  | some (.totalHeadersTooLarge size limit) =>
+    shouldSatisfy (size > limit) "size exceeds limit"
+  | _ => throw <| IO.userError "expected totalHeadersTooLarge error"
+
+test "validateRequest URI at limit passes" := do
+  let config : ServerConfig := { maxUriLength := 10 }
+  let req : Request := {
+    method := Method.GET
+    path := "/123456789"  -- exactly 10 chars
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  shouldSatisfy (validateRequest req config == none) "URI at limit should pass"
+
+test "validateRequest header count at limit passes" := do
+  let config : ServerConfig := { maxHeaderCount := 2 }
+  let headers := Headers.empty
+    |>.add "Header1" "value1"
+    |>.add "Header2" "value2"
+  let req : Request := {
+    method := Method.GET
+    path := "/test"
+    version := Version.http11
+    headers := headers
+    body := ByteArray.empty
+  }
+  shouldSatisfy (validateRequest req config == none) "header count at limit should pass"
 
 -- ============================================================================
 -- Middleware Tests
