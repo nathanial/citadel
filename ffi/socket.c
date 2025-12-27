@@ -64,6 +64,13 @@ LEAN_EXPORT lean_obj_res citadel_socket_new(lean_obj_arg world) {
     int opt = 1;
     setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
+    /* Set recv/send timeouts to 5 seconds */
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
     return lean_io_result_mk_ok(citadel_socket_box(sock));
 }
 
@@ -134,6 +141,13 @@ LEAN_EXPORT lean_obj_res citadel_socket_accept(
             lean_mk_string("Failed to allocate client socket")));
     }
     client->fd = client_fd;
+
+    /* Set recv/send timeouts to 5 seconds on client socket */
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     return lean_io_result_mk_ok(citadel_socket_box(client));
 }

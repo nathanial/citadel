@@ -11,6 +11,57 @@ namespace Citadel
 
 open Herald.Core
 
+/-- Debug statistics for monitoring server health -/
+structure ServerStats where
+  /-- Number of active HTTP connection handlers -/
+  activeConnections : IO.Ref Nat
+  /-- Number of active SSE connections -/
+  activeSseConnections : IO.Ref Nat
+  /-- Total connections accepted -/
+  totalConnections : IO.Ref Nat
+
+namespace ServerStats
+
+def create : IO ServerStats := do
+  let activeConnections ← IO.mkRef 0
+  let activeSseConnections ← IO.mkRef 0
+  let totalConnections ← IO.mkRef 0
+  pure { activeConnections, activeSseConnections, totalConnections }
+
+def incrementActive (s : ServerStats) : IO Nat :=
+  s.activeConnections.modifyGet fun n => (n + 1, n + 1)
+
+def decrementActive (s : ServerStats) : IO Nat :=
+  s.activeConnections.modifyGet fun n => (n - 1, n - 1)
+
+def incrementSse (s : ServerStats) : IO Nat :=
+  s.activeSseConnections.modifyGet fun n => (n + 1, n + 1)
+
+def decrementSse (s : ServerStats) : IO Nat :=
+  s.activeSseConnections.modifyGet fun n => (n - 1, n - 1)
+
+def incrementTotal (s : ServerStats) : IO Nat :=
+  s.totalConnections.modifyGet fun n => (n + 1, n + 1)
+
+def print (s : ServerStats) : IO Unit := do
+  let active ← s.activeConnections.get
+  let sse ← s.activeSseConnections.get
+  let total ← s.totalConnections.get
+  IO.println s!"[STATS] active={active} sse={sse} total={total}"
+
+end ServerStats
+
+/-- Global server stats (initialized on first server run) -/
+initialize globalStats : IO.Ref (Option ServerStats) ← IO.mkRef none
+
+def getOrCreateStats : IO ServerStats := do
+  match ← globalStats.get with
+  | some s => pure s
+  | none =>
+    let s ← ServerStats.create
+    globalStats.set (some s)
+    pure s
+
 /-- Serialize a response to bytes for sending over the wire -/
 def serializeResponse (resp : Response) : ByteArray :=
   let statusLine := s!"{resp.version} {resp.status.code} {resp.reason}\r\n"
@@ -94,16 +145,19 @@ private def sendResponse (client : Socket) (resp : Response) : IO Unit := do
 
 /-- SSE keep-alive loop: sends pings and detects disconnection -/
 private partial def sseKeepAliveLoop (client : Socket) (manager : SSE.ConnectionManager) (clientId : Nat) : IO Unit := do
-  IO.sleep 15000  -- 15 second heartbeat
+  IO.sleep 1000  -- 1 second check interval for faster disconnect detection
   try
+    -- Try to send a ping - this will fail if client disconnected
     SSE.sendPing client
     sseKeepAliveLoop client manager clientId
   catch _ =>
-    -- Client disconnected
+    -- Client disconnected (send failed)
+    IO.println s!"[SSE] Client {clientId} ping failed, removing"
     manager.removeClient clientId
 
 /-- Handle an SSE connection - keeps connection open until client disconnects -/
 private def handleSSEConnection (s : Server) (client : Socket) (topic : String) : IO Unit := do
+  let stats ← getOrCreateStats
   match s.sseManager with
   | none =>
     -- SSE not enabled, send error response
@@ -115,6 +169,8 @@ private def handleSSEConnection (s : Server) (client : Socket) (topic : String) 
 
     -- Register client with the connection manager
     let clientId ← manager.addClient client topic
+    let sseCount ← stats.incrementSse
+    IO.println s!"[SSE] Client {clientId} connected to '{topic}' (sse={sseCount})"
 
     -- Send initial connection confirmation
     SSE.sendConnected client
@@ -123,20 +179,29 @@ private def handleSSEConnection (s : Server) (client : Socket) (topic : String) 
     try
       sseKeepAliveLoop client manager clientId
     catch _ =>
-      -- Ensure cleanup on any error
-      manager.removeClient clientId
+      pure ()
+    -- Ensure cleanup
+    manager.removeClient clientId
+    let sseCount ← stats.decrementSse
+    IO.println s!"[SSE] Client {clientId} disconnected (sse={sseCount})"
 
 /-- Handle a single request -/
 private def handleRequest (s : Server) (req : Request) : IO Response := do
+  let startTime ← IO.monoMsNow
+  IO.println s!"[REQ] {req.method} {req.path}"
   match s.router.findRoute req with
   | some (route, params) =>
     let serverReq : ServerRequest := { request := req, params }
     try
-      route.handler serverReq
+      let resp ← route.handler serverReq
+      let elapsed := (← IO.monoMsNow) - startTime
+      IO.println s!"[REQ] {req.method} {req.path} -> {resp.status.code} ({elapsed}ms)"
+      pure resp
     catch e =>
-      IO.eprintln s!"Handler error: {e}"
+      IO.eprintln s!"[REQ] Handler error: {e}"
       pure (Response.internalError)
   | none =>
+    IO.println s!"[REQ] {req.method} {req.path} -> 404"
     pure (Response.notFound)
 
 /-- Read HTTP request from client socket -/
@@ -148,16 +213,13 @@ private def readRequest (client : Socket) : IO (Option Request) := do
   while attempts < maxAttempts do
     let chunk ← client.recv 16384  -- 16KB chunks for better performance
     if chunk.isEmpty then
-      if buffer.isEmpty then
-        return none  -- Client closed connection
-      else
-        attempts := attempts + 1
+      return none  -- Client closed connection (recv returned 0)
     else
       buffer := buffer ++ chunk
       -- Try to parse
       match Herald.parseRequest buffer with
       | .ok result => return some result.request
-      | .error .incomplete => attempts := attempts + 1
+      | .error .incomplete => attempts := attempts + 1  -- Wait for more data
       | .error _ => return none  -- Parse error
 
   return none
@@ -212,16 +274,31 @@ def run (s : Server) : IO Unit := do
   -- Listen
   serverSocket.listen 128
 
+  let stats ← getOrCreateStats
+
   IO.println s!"Citadel server listening on {s.config.host}:{s.config.port}"
 
-  -- Accept loop (concurrent via IO.asTask)
+  -- Stats printer task (every 10 seconds)
+  let _ ← IO.asTask do
+    while true do
+      IO.sleep 10000
+      stats.print
+
+  -- Accept loop (use dedicated threads to avoid blocking the thread pool)
   while true do
     let clientSocket ← serverSocket.accept
-    let _ ← IO.asTask do
+    let total ← stats.incrementTotal
+    let active ← stats.incrementActive
+    IO.println s!"[CONN] Accepted connection #{total} (active={active})"
+    -- Use Task.Priority.dedicated so blocking I/O doesn't starve the thread pool
+    let _ ← IO.asTask (prio := .dedicated) do
       try
         s.handleConnection clientSocket
       catch e =>
-        IO.eprintln s!"Connection error: {e}"
+        IO.eprintln s!"[CONN] Connection error: {e}"
+      finally
+        let active ← stats.decrementActive
+        IO.println s!"[CONN] Connection closed (active={active})"
         try clientSocket.close catch _ => pure ()
 
 end Server

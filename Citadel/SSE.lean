@@ -112,26 +112,30 @@ def clientCount (cm : ConnectionManager) : IO Nat := do
   let clients ← cm.clients.get
   pure clients.size
 
-/-- Broadcast event to all clients on a specific topic -/
+/-- Broadcast event to all clients on a specific topic (non-blocking, dedicated threads) -/
 def broadcast (cm : ConnectionManager) (topic : String) (event : Event) : IO Unit := do
   let clients ← cm.getClientsForTopic topic
   let bytes := event.toBytes
   for client in clients do
-    try
-      client.socket.send bytes
-    catch _ =>
-      -- Client disconnected, remove them
-      cm.removeClient client.id
+    -- Use dedicated thread to avoid blocking the thread pool
+    let _ ← IO.asTask (prio := .dedicated) do
+      try
+        client.socket.send bytes
+      catch _ =>
+        -- Client disconnected, remove them
+        cm.removeClient client.id
 
-/-- Broadcast to ALL connected clients (all topics) -/
+/-- Broadcast to ALL connected clients (all topics, non-blocking, dedicated threads) -/
 def broadcastAll (cm : ConnectionManager) (event : Event) : IO Unit := do
   let clients ← cm.getAllClients
   let bytes := event.toBytes
   for client in clients do
-    try
-      client.socket.send bytes
-    catch _ =>
-      cm.removeClient client.id
+    -- Use dedicated thread to avoid blocking the thread pool
+    let _ ← IO.asTask (prio := .dedicated) do
+      try
+        client.socket.send bytes
+      catch _ =>
+        cm.removeClient client.id
 
 /-- Send event to a specific client -/
 def sendTo (cm : ConnectionManager) (clientId : Nat) (event : Event) : IO Bool := do
