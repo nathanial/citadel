@@ -39,8 +39,14 @@ namespace ServerRequest
 /-- Get the request method -/
 def method (r : ServerRequest) : Method := r.request.method
 
-/-- Get the request path -/
-def path (r : ServerRequest) : String := r.request.path
+/-- Get the full request path including query string -/
+def fullPath (r : ServerRequest) : String := r.request.path
+
+/-- Get the request path without the query string -/
+def path (r : ServerRequest) : String :=
+  match r.request.path.splitOn "?" with
+  | p :: _ => p
+  | [] => r.request.path
 
 /-- Get the request headers -/
 def headers (r : ServerRequest) : Headers := r.request.headers
@@ -59,6 +65,60 @@ def param (r : ServerRequest) (name : String) : Option String :=
 /-- Get a header by name -/
 def header (r : ServerRequest) (name : String) : Option String :=
   r.request.headers.get name
+
+/-- Get the raw query string (without the leading '?') -/
+def query (r : ServerRequest) : String :=
+  match r.request.path.splitOn "?" with
+  | _ :: rest => String.intercalate "?" rest
+  | _ => ""
+
+/-- Decode a percent-encoded character (%XX) -/
+private def decodeHexChar (c1 c2 : Char) : Option Char :=
+  let hexVal (c : Char) : Option UInt8 :=
+    if '0' ≤ c && c ≤ '9' then some (c.toNat.toUInt8 - '0'.toNat.toUInt8)
+    else if 'a' ≤ c && c ≤ 'f' then some (c.toNat.toUInt8 - 'a'.toNat.toUInt8 + 10)
+    else if 'A' ≤ c && c ≤ 'F' then some (c.toNat.toUInt8 - 'A'.toNat.toUInt8 + 10)
+    else none
+  match hexVal c1, hexVal c2 with
+  | some h1, some h2 => some (Char.ofNat (h1 * 16 + h2).toNat)
+  | _, _ => none
+
+/-- URL-decode a string (handles %XX and + for space) -/
+def urlDecode (s : String) : String :=
+  let chars := s.toList
+  go chars []
+where
+  go : List Char → List Char → String
+  | [], acc => String.ofList acc.reverse
+  | '+' :: rest, acc => go rest (' ' :: acc)
+  | '%' :: c1 :: c2 :: rest, acc =>
+    match decodeHexChar c1 c2 with
+    | some c => go rest (c :: acc)
+    | none => go rest (c2 :: c1 :: '%' :: acc)  -- Keep as-is if invalid
+  | c :: rest, acc => go (rest) (c :: acc)
+
+/-- Parse a query string into key-value pairs -/
+def parseQueryString (qs : String) : List (String × String) :=
+  if qs.isEmpty then []
+  else
+    qs.splitOn "&"
+      |>.filterMap fun pair =>
+        match pair.splitOn "=" with
+        | [key] => some (urlDecode key, "")
+        | key :: rest => some (urlDecode key, urlDecode (String.intercalate "=" rest))
+        | [] => none
+
+/-- Get all query parameters as a list of key-value pairs -/
+def queryParams (r : ServerRequest) : List (String × String) :=
+  parseQueryString r.query
+
+/-- Get a query parameter by name -/
+def queryParam (r : ServerRequest) (name : String) : Option String :=
+  r.queryParams.lookup name
+
+/-- Get all values for a query parameter (for repeated keys like ?tag=a&tag=b) -/
+def queryParamAll (r : ServerRequest) (name : String) : List String :=
+  r.queryParams.filterMap fun (k, v) => if k == name then some v else none
 
 end ServerRequest
 

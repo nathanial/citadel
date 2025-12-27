@@ -248,7 +248,10 @@ test "ServerRequest accessors" := do
   }
   let serverReq : ServerRequest := { request := req, params := [("id", "123")] }
   serverReq.method ≡ Method.GET
-  serverReq.path ≡ "/test?q=hello"
+  serverReq.path ≡ "/test"
+  serverReq.fullPath ≡ "/test?q=hello"
+  serverReq.query ≡ "q=hello"
+  serverReq.queryParam "q" ≡ some "hello"
   serverReq.param "id" ≡ some "123"
   serverReq.param "missing" ≡ none
   serverReq.header "Host" ≡ some "example.com"
@@ -363,6 +366,166 @@ test "empty middleware chain is identity" := do
   }
   let resp ← wrapped req
   shouldSatisfy (resp.body == "Unchanged".toUTF8) "body should be Unchanged"
+
+-- ============================================================================
+-- Query String Tests
+-- ============================================================================
+
+testSuite "QueryString"
+
+test "query returns empty string when no query" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/users"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.query ≡ ""
+
+test "query returns query string without leading ?" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/users?name=john&age=30"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.query ≡ "name=john&age=30"
+
+test "path strips query string" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/users?name=john"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.path ≡ "/users"
+
+test "fullPath includes query string" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/users?name=john"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.fullPath ≡ "/users?name=john"
+
+test "queryParam returns single param" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?q=hello&limit=10"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.queryParam "q" ≡ some "hello"
+  req.queryParam "limit" ≡ some "10"
+  req.queryParam "missing" ≡ none
+
+test "queryParams returns all params" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?a=1&b=2&c=3"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  let params := req.queryParams
+  params.length ≡ 3
+  params.lookup "a" ≡ some "1"
+  params.lookup "b" ≡ some "2"
+  params.lookup "c" ≡ some "3"
+
+test "queryParam handles empty value" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?flag&name=test"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.queryParam "flag" ≡ some ""
+  req.queryParam "name" ≡ some "test"
+
+test "queryParam handles value with equals sign" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?expr=a=b"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.queryParam "expr" ≡ some "a=b"
+
+test "urlDecode handles plus as space" := do
+  ServerRequest.urlDecode "hello+world" ≡ "hello world"
+
+test "urlDecode handles percent encoding" := do
+  ServerRequest.urlDecode "hello%20world" ≡ "hello world"
+  ServerRequest.urlDecode "%2F" ≡ "/"
+  ServerRequest.urlDecode "%3D" ≡ "="
+
+test "urlDecode handles mixed encoding" := do
+  ServerRequest.urlDecode "a+b%3Dc" ≡ "a b=c"
+
+test "queryParam decodes URL-encoded values" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?name=John+Doe&city=New%20York"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.queryParam "name" ≡ some "John Doe"
+  req.queryParam "city" ≡ some "New York"
+
+test "queryParamAll returns all values for repeated key" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?tag=rust&tag=lean&tag=haskell"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  let tags := req.queryParamAll "tag"
+  tags.length ≡ 3
+  tags ≡ ["rust", "lean", "haskell"]
+
+test "query handles multiple question marks" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/search?q=what?&foo=bar"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.query ≡ "q=what?&foo=bar"
+  req.queryParam "q" ≡ some "what?"
 
 #generate_tests
 

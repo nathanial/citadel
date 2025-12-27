@@ -29,15 +29,21 @@ Socket timeouts are hardcoded to 5 seconds in C code instead of using config val
 
 ## High Priority
 
-### Query String Parsing
-**Files:** `Citadel/Core.lean:207-208`
+### ~~Query String Parsing~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Core.lean:69-121`
 
-Routes currently strip query strings for matching but don't parse or expose query parameters. Users cannot access `?key=value` data.
+~~Routes currently strip query strings for matching but don't parse or expose query parameters. Users cannot access `?key=value` data.~~
 
-**Add:**
-- `ServerRequest.query : String` - Raw query string
+**Implemented:**
+- `ServerRequest.query : String` - Raw query string (without leading `?`)
 - `ServerRequest.queryParam : String → Option String` - Get single param
 - `ServerRequest.queryParams : List (String × String)` - All params
+- `ServerRequest.queryParamAll : String → List String` - All values for repeated keys
+- `ServerRequest.fullPath : String` - Full path including query string
+- `ServerRequest.path` - Now returns path without query string
+- `ServerRequest.urlDecode : String → String` - URL decoding with `%XX` and `+` support
+
+Added 14 query string tests covering edge cases.
 
 ### Form Data Parsing
 Support common form submission formats:
