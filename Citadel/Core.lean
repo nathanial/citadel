@@ -289,6 +289,29 @@ def formFile (r : ServerRequest) (name : String) : Option FormFile :=
 def formFileAll (r : ServerRequest) (name : String) : List FormFile :=
   r.formData.fileAll name
 
+-- ============================================================================
+-- Cookie Parsing
+-- ============================================================================
+
+/-- Parse Cookie header into key-value pairs -/
+def parseCookieHeader (cookieHeader : String) : List (String × String) :=
+  cookieHeader.splitOn "; "
+    |>.filterMap fun pair =>
+      match pair.splitOn "=" with
+      | [] => none
+      | [name] => some (name.trim, "")
+      | name :: rest => some (name.trim, (String.intercalate "=" rest).trim)
+
+/-- Get all cookies from the request -/
+def cookies (r : ServerRequest) : List (String × String) :=
+  match r.header "Cookie" with
+  | some cookieHeader => parseCookieHeader cookieHeader
+  | none => []
+
+/-- Get a cookie value by name -/
+def cookie (r : ServerRequest) (name : String) : Option String :=
+  r.cookies.lookup name
+
 end ServerRequest
 
 /-- Response builder for convenient response construction -/
@@ -331,6 +354,89 @@ def build (b : ResponseBuilder) : Response :=
     version := Version.http11
     headers := headers
     body := b.body }
+
+end ResponseBuilder
+
+-- ============================================================================
+-- Cookie Options
+-- ============================================================================
+
+/-- SameSite cookie attribute -/
+inductive SameSite where
+  | strict
+  | lax
+  | none
+  deriving Repr, BEq, Inhabited
+
+instance : ToString SameSite where
+  toString
+    | .strict => "Strict"
+    | .lax => "Lax"
+    | .none => "None"
+
+/-- Options for setting cookies -/
+structure CookieOptions where
+  /-- Max-Age in seconds (takes precedence over Expires) -/
+  maxAge : Option Nat := none
+  /-- Domain attribute -/
+  domain : Option String := none
+  /-- Path attribute (defaults to "/") -/
+  path : Option String := some "/"
+  /-- Secure flag (cookie only sent over HTTPS) -/
+  secure : Bool := false
+  /-- HttpOnly flag (cookie not accessible via JavaScript) -/
+  httpOnly : Bool := true
+  /-- SameSite attribute -/
+  sameSite : Option SameSite := some .lax
+  deriving Repr, Inhabited
+
+namespace CookieOptions
+
+/-- Default cookie options -/
+def default : CookieOptions := {}
+
+/-- Session cookie (expires when browser closes) -/
+def session : CookieOptions := { httpOnly := true, path := some "/" }
+
+/-- Persistent cookie with max age in seconds -/
+def persistent (seconds : Nat) : CookieOptions :=
+  { maxAge := some seconds, httpOnly := true, path := some "/" }
+
+/-- Secure cookie for HTTPS only -/
+def secureOnly : CookieOptions :=
+  { secure := true, httpOnly := true, sameSite := some .strict, path := some "/" }
+
+end CookieOptions
+
+namespace ResponseBuilder
+
+/-- Format a Set-Cookie header value -/
+private def formatSetCookie (name value : String) (opts : CookieOptions) : String :=
+  let parts := [s!"{name}={value}"]
+  let parts := match opts.maxAge with
+    | some age => parts ++ [s!"Max-Age={age}"]
+    | none => parts
+  let parts := match opts.domain with
+    | some d => parts ++ [s!"Domain={d}"]
+    | none => parts
+  let parts := match opts.path with
+    | some p => parts ++ [s!"Path={p}"]
+    | none => parts
+  let parts := if opts.secure then parts ++ ["Secure"] else parts
+  let parts := if opts.httpOnly then parts ++ ["HttpOnly"] else parts
+  let parts := match opts.sameSite with
+    | some ss => parts ++ [s!"SameSite={ss}"]
+    | none => parts
+  String.intercalate "; " parts
+
+/-- Set a cookie with the given name, value, and options -/
+def setCookie (b : ResponseBuilder) (name value : String) (opts : CookieOptions := {}) : ResponseBuilder :=
+  b.withHeader "Set-Cookie" (formatSetCookie name value opts)
+
+/-- Clear a cookie by setting it with an expired Max-Age -/
+def clearCookie (b : ResponseBuilder) (name : String) (path : Option String := some "/") : ResponseBuilder :=
+  let opts : CookieOptions := { maxAge := some 0, path := path, httpOnly := false }
+  b.withHeader "Set-Cookie" (formatSetCookie name "" opts)
 
 end ResponseBuilder
 

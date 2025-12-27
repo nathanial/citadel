@@ -5,10 +5,15 @@
 
 import Citadel
 import Crucible
+import Staple
 
 open Crucible
 open Citadel
 open Herald.Core
+
+/-- Helper to check if a string contains a substring -/
+def containsSubstr (haystack needle : String) : Bool :=
+  (haystack.splitOn needle).length > 1
 
 -- ============================================================================
 -- RoutePattern Tests
@@ -763,6 +768,128 @@ test "formData returns empty for non-form content" := do
   let fd := req.formData
   fd.fields.length ≡ 0
   fd.files.length ≡ 0
+
+-- ============================================================================
+-- Cookie Tests
+-- ============================================================================
+
+testSuite "Cookies"
+
+test "cookie returns cookie value" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty.add "Cookie" "session=abc123; user=john"
+      body := ByteArray.empty
+    }
+  }
+  req.cookie "session" ≡ some "abc123"
+  req.cookie "user" ≡ some "john"
+  req.cookie "missing" ≡ none
+
+test "cookies returns all cookies" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty.add "Cookie" "a=1; b=2; c=3"
+      body := ByteArray.empty
+    }
+  }
+  let cookies := req.cookies
+  cookies.length ≡ 3
+  cookies.lookup "a" ≡ some "1"
+  cookies.lookup "b" ≡ some "2"
+  cookies.lookup "c" ≡ some "3"
+
+test "cookie handles value with equals sign" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty.add "Cookie" "token=abc=def=ghi"
+      body := ByteArray.empty
+    }
+  }
+  req.cookie "token" ≡ some "abc=def=ghi"
+
+test "cookies returns empty list when no Cookie header" := do
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  req.cookies.length ≡ 0
+
+test "setCookie adds Set-Cookie header" := do
+  let builder := ResponseBuilder.withStatus StatusCode.ok
+    |>.setCookie "session" "abc123"
+  -- Check that Set-Cookie header contains the cookie
+  match builder.headers.get "Set-Cookie" with
+  | some header =>
+    shouldSatisfy (header.startsWith "session=abc123") "should start with name=value"
+  | none => throw (IO.userError "Expected Set-Cookie header")
+
+test "setCookie with options includes attributes" := do
+  let opts : CookieOptions := {
+    maxAge := some 3600
+    path := some "/app"
+    secure := true
+    httpOnly := true
+    sameSite := some .strict
+  }
+  let builder := ResponseBuilder.withStatus StatusCode.ok
+    |>.setCookie "token" "xyz" opts
+  match builder.headers.get "Set-Cookie" with
+  | some header =>
+    shouldSatisfy (containsSubstr header "token=xyz") "should contain name=value"
+    shouldSatisfy (containsSubstr header "Max-Age=3600") "should contain Max-Age"
+    shouldSatisfy (containsSubstr header "Path=/app") "should contain Path"
+    shouldSatisfy (containsSubstr header "Secure") "should contain Secure"
+    shouldSatisfy (containsSubstr header "HttpOnly") "should contain HttpOnly"
+    shouldSatisfy (containsSubstr header "SameSite=Strict") "should contain SameSite"
+  | none => throw (IO.userError "Expected Set-Cookie header")
+
+test "setCookie with domain" := do
+  let opts : CookieOptions := { domain := some ".example.com" }
+  let builder := ResponseBuilder.withStatus StatusCode.ok
+    |>.setCookie "cookie" "value" opts
+  match builder.headers.get "Set-Cookie" with
+  | some header =>
+    shouldSatisfy (containsSubstr header "Domain=.example.com") "should contain Domain"
+  | none => throw (IO.userError "Expected Set-Cookie header")
+
+test "clearCookie sets Max-Age to 0" := do
+  let builder := ResponseBuilder.withStatus StatusCode.ok
+    |>.clearCookie "session"
+  match builder.headers.get "Set-Cookie" with
+  | some header =>
+    shouldSatisfy (containsSubstr header "session=") "should contain cookie name"
+    shouldSatisfy (containsSubstr header "Max-Age=0") "should set Max-Age=0"
+  | none => throw (IO.userError "Expected Set-Cookie header")
+
+test "CookieOptions.session creates session cookie" := do
+  let opts := CookieOptions.session
+  shouldSatisfy opts.httpOnly "should be HttpOnly"
+  shouldSatisfy (opts.maxAge == none) "should have no Max-Age"
+
+test "CookieOptions.persistent creates cookie with max age" := do
+  let opts := CookieOptions.persistent 86400
+  opts.maxAge ≡ some 86400
+
+test "CookieOptions.secureOnly creates secure cookie" := do
+  let opts := CookieOptions.secureOnly
+  shouldSatisfy opts.secure "should be Secure"
+  shouldSatisfy opts.httpOnly "should be HttpOnly"
+  opts.sameSite ≡ some SameSite.strict
 
 #generate_tests
 

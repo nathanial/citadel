@@ -93,12 +93,28 @@ Added 2 tests for HEAD and OPTIONS routing.
 
 Added 12 tests for the new status code helpers.
 
-### Cookie Helpers
-Add cookie parsing and setting utilities:
-- `ServerRequest.cookie : String → Option String`
-- `ServerRequest.cookies : List (String × String)`
+### ~~Cookie Helpers~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Core.lean:292-440`
+
+~~Add cookie parsing and setting utilities.~~
+
+**Implemented:**
+
+*Request Cookie Parsing:*
+- `ServerRequest.cookies : List (String × String)` - All cookies from Cookie header
+- `ServerRequest.cookie : String → Option String` - Get cookie by name
+- `ServerRequest.parseCookieHeader` - Parse Cookie header format
+
+*Response Cookie Setting:*
+- `SameSite` enum (`strict`, `lax`, `none`)
+- `CookieOptions` structure with `maxAge`, `domain`, `path`, `secure`, `httpOnly`, `sameSite`
+- `CookieOptions.session` - Session cookie preset
+- `CookieOptions.persistent` - Cookie with max age preset
+- `CookieOptions.secureOnly` - Secure HTTPS-only cookie preset
 - `ResponseBuilder.setCookie : String → String → CookieOptions → ResponseBuilder`
-- `ResponseBuilder.clearCookie : String → ResponseBuilder`
+- `ResponseBuilder.clearCookie : String → ResponseBuilder` - Expire cookie
+
+Added 11 cookie tests covering parsing and setting.
 
 ---
 
