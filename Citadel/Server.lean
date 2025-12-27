@@ -168,6 +168,11 @@ private def sendResponse (client : Socket) (resp : Response) : IO Unit := do
   let data := serializeResponse resp
   client.send data
 
+/-- Send HTTP response to any socket type -/
+private def sendResponseAny (client : AnySocket) (resp : Response) : IO Unit := do
+  let data := serializeResponse resp
+  client.send data
+
 /-- SSE keep-alive loop: sends pings and detects disconnection -/
 private partial def sseKeepAliveLoop (client : Socket) (manager : SSE.ConnectionManager) (clientId : Nat) : IO Unit := do
   IO.sleep 1000  -- 1 second check interval for faster disconnect detection
@@ -269,6 +274,29 @@ private def readRequest (client : Socket) (config : ServerConfig) : IO ReadResul
 
   return .timeout  -- Exceeded max attempts
 
+/-- Read HTTP request from any socket type -/
+private def readRequestAny (client : AnySocket) (config : ServerConfig) : IO ReadResult := do
+  let mut buffer := ByteArray.empty
+  let mut attempts := 0
+  let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)
+
+  while attempts < maxAttempts do
+    let chunk ← client.recv 16384  -- 16KB chunks for better performance
+    if chunk.isEmpty then
+      return .connectionClosed  -- Client closed connection (recv returned 0)
+    else
+      buffer := buffer ++ chunk
+      -- Check body size limit
+      if buffer.size > config.maxBodySize then
+        return .payloadTooLarge
+      -- Try to parse
+      match Herald.parseRequest buffer with
+      | .ok result => return .success result.request
+      | .error .incomplete => attempts := attempts + 1  -- Wait for more data
+      | .error _ => return .parseError
+
+  return .timeout  -- Exceeded max attempts
+
 /-- Handle a client connection -/
 private def handleConnection (s : Server) (client : Socket) : IO Unit := do
   let mut keepAlive := true
@@ -323,8 +351,56 @@ private def handleConnection (s : Server) (client : Socket) : IO Unit := do
 
   client.close
 
-/-- Run the server (blocking) -/
-def run (s : Server) : IO Unit := do
+/-- Handle a TLS client connection (SSE not supported over TLS for now) -/
+private def handleTlsConnection (s : Server) (client : TlsSocket) : IO Unit := do
+  let anyClient := AnySocket.tls client
+  let mut keepAlive := true
+
+  while keepAlive do
+    match ← readRequestAny anyClient s.config with
+    | .success req =>
+      -- Regular HTTP request (SSE not supported over TLS for now)
+      -- Check Connection header
+      let connHeader := req.headers.get "Connection"
+      let isHttp10 := req.version.minor == 0
+      let closeRequested := connHeader == some "close"
+      let keepAliveRequested := connHeader == some "keep-alive"
+
+      keepAlive := if isHttp10 then keepAliveRequested else !closeRequested
+
+      -- Handle request
+      let resp ← s.handleRequest req
+
+      -- Add Connection header if closing
+      let resp := if !keepAlive then
+        { resp with headers := resp.headers.add "Connection" "close" }
+      else
+        resp
+
+      sendResponseAny anyClient resp
+
+    | .connectionClosed =>
+      keepAlive := false
+
+    | .parseError =>
+      IO.eprintln "[TLS] Parse error, sending 400 Bad Request"
+      sendResponseAny anyClient (Response.badRequest "Malformed HTTP request")
+      keepAlive := false
+
+    | .payloadTooLarge =>
+      IO.eprintln s!"[TLS] Payload exceeds {s.config.maxBodySize} bytes, sending 413"
+      sendResponseAny anyClient (Response.payloadTooLarge)
+      keepAlive := false
+
+    | .timeout =>
+      IO.eprintln "[TLS] Request timeout, sending 408"
+      sendResponseAny anyClient (Response.requestTimeout)
+      keepAlive := false
+
+  client.close
+
+/-- Run plain HTTP server (internal) -/
+private def runPlain (s : Server) : IO Unit := do
   -- Create server socket
   let serverSocket ← Socket.new
 
@@ -336,7 +412,7 @@ def run (s : Server) : IO Unit := do
 
   let stats ← getOrCreateStats
 
-  IO.println s!"Citadel server listening on {s.config.host}:{s.config.port}"
+  IO.println s!"Citadel HTTP server listening on {s.config.host}:{s.config.port}"
 
   -- Stats printer task (every 10 seconds)
   let _ ← IO.asTask do
@@ -362,6 +438,62 @@ def run (s : Server) : IO Unit := do
         let threads ← stats.decrementDedicated
         IO.println s!"[CONN] Closed (active={active} threads={threads})"
         try clientSocket.close catch _ => pure ()
+
+/-- Run HTTPS server with TLS (internal) -/
+private def runTls (s : Server) (tlsConfig : TlsConfig) : IO Unit := do
+  -- Create TLS server socket
+  let serverSocket ← TlsSocket.newServer tlsConfig.certFile tlsConfig.keyFile
+
+  -- Bind to address
+  serverSocket.bind s.config.host s.config.port
+
+  -- Listen
+  serverSocket.listen 128
+
+  let stats ← getOrCreateStats
+
+  IO.println s!"Citadel HTTPS server listening on {s.config.host}:{s.config.port}"
+
+  -- Stats printer task (every 10 seconds)
+  let _ ← IO.asTask do
+    while true do
+      IO.sleep 10000
+      stats.print
+
+  -- Accept loop (use dedicated threads to avoid blocking the thread pool)
+  while true do
+    -- Handle TLS accept/handshake errors gracefully (silent close)
+    let acceptResult ← try
+      let clientSocket ← serverSocket.accept
+      pure (some clientSocket)
+    catch e =>
+      IO.eprintln s!"[TLS] Accept/handshake error: {e}"
+      pure none
+
+    match acceptResult with
+    | none => pure ()  -- Continue accepting after handshake failure
+    | some clientSocket =>
+      let total ← stats.incrementTotal
+      let active ← stats.incrementActive
+      let threads ← stats.incrementDedicated
+      IO.println s!"[TLS] Accepted #{total} (active={active} threads={threads})"
+      -- Use Task.Priority.dedicated so blocking I/O doesn't starve the thread pool
+      let _ ← IO.asTask (prio := .dedicated) do
+        try
+          s.handleTlsConnection clientSocket
+        catch e =>
+          IO.eprintln s!"[TLS] Connection error: {e}"
+        finally
+          let active ← stats.decrementActive
+          let threads ← stats.decrementDedicated
+          IO.println s!"[TLS] Closed (active={active} threads={threads})"
+          try clientSocket.close catch _ => pure ()
+
+/-- Run the server (blocking). Uses TLS if configured, otherwise plain HTTP. -/
+def run (s : Server) : IO Unit := do
+  match s.config.tls with
+  | none => s.runPlain
+  | some tlsConfig => s.runTls tlsConfig
 
 end Server
 

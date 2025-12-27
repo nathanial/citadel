@@ -208,11 +208,36 @@ Currently creates one thread per connection. Consider:
 
 ## New Features
 
-### HTTPS/TLS Support
-Add TLS via OpenSSL or native bindings:
-- `ServerConfig.tlsCert : Option String`
-- `ServerConfig.tlsKey : Option String`
-- Automatic HTTP→HTTPS redirect option
+### ~~HTTPS/TLS Support~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Socket.lean`, `Citadel/Core.lean`, `Citadel/Server.lean`, `ffi/socket.c`, `lakefile.lean`
+
+~~Add TLS via OpenSSL or native bindings.~~
+
+**Implemented:**
+- `TlsConfig` structure with `certFile` and `keyFile` paths
+- `ServerConfig.tls : Option TlsConfig` - Enable HTTPS when set
+- `TlsSocket` opaque type with FFI bindings for OpenSSL
+- `TlsSocket.newServer` - Create TLS server with certificate/key
+- `TlsSocket.bind`, `listen`, `accept`, `recv`, `send`, `close` - Full socket API
+- `AnySocket` sum type - Unified interface for plain/TLS sockets
+- `Server.run` automatically uses TLS when configured
+- Silent error handling: TLS handshake failures are logged and connection closed
+- OpenSSL 3.x linking via Homebrew paths in lakefile.lean
+
+**Usage:**
+```lean
+let config : ServerConfig := {
+  port := 8443
+  tls := some { certFile := "cert.pem", keyFile := "key.pem" }
+}
+```
+
+**Not implemented (future work):**
+- mTLS (client certificate verification)
+- Automatic HTTP→HTTPS redirect middleware
+- SNI (multiple certificates)
+
+Added 4 TLS configuration tests
 
 ### Compression
 Support response compression:
@@ -341,7 +366,7 @@ Document:
 - Connection pool options
 
 ### v1.0.0 - Feature Complete
-- HTTPS/TLS
+- ~~HTTPS/TLS~~ ✅
 - Compression
 - Range requests
 - Caching

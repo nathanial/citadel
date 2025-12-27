@@ -9,6 +9,14 @@ namespace Citadel
 
 open Herald.Core
 
+/-- TLS/SSL configuration for HTTPS -/
+structure TlsConfig where
+  /-- Path to server certificate (PEM format) -/
+  certFile : String
+  /-- Path to private key (PEM format) -/
+  keyFile : String
+  deriving Repr, Inhabited, BEq
+
 /-- Server configuration -/
 structure ServerConfig where
   /-- Port to listen on -/
@@ -21,6 +29,8 @@ structure ServerConfig where
   keepAliveTimeout : Nat := 60
   /-- Request timeout in seconds -/
   requestTimeout : Nat := 30
+  /-- TLS configuration (None = HTTP, Some = HTTPS) -/
+  tls : Option TlsConfig := none
   deriving Repr, Inhabited
 
 /-- Path parameters extracted from route matching -/

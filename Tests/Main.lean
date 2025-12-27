@@ -955,6 +955,41 @@ test "CookieOptions.secureOnly creates secure cookie" := do
   shouldSatisfy opts.httpOnly "should be HttpOnly"
   opts.sameSite ≡ some SameSite.strict
 
+-- ============================================================================
+-- TLS Configuration Tests
+-- ============================================================================
+
+testSuite "TLS"
+
+test "TlsConfig structure" := do
+  let config : TlsConfig := { certFile := "/path/to/cert.pem", keyFile := "/path/to/key.pem" }
+  config.certFile ≡ "/path/to/cert.pem"
+  config.keyFile ≡ "/path/to/key.pem"
+
+test "ServerConfig with TLS defaults to none" := do
+  let config : ServerConfig := {}
+  shouldSatisfy (config.tls == none) "tls should default to none"
+
+test "ServerConfig with TLS configured" := do
+  let tlsConfig : TlsConfig := { certFile := "cert.pem", keyFile := "key.pem" }
+  let config : ServerConfig := { tls := some tlsConfig }
+  match config.tls with
+  | some tls =>
+    tls.certFile ≡ "cert.pem"
+    tls.keyFile ≡ "key.pem"
+  | none => throw (IO.userError "Expected TLS config")
+
+test "ServerConfig with TLS and custom port" := do
+  let tlsConfig : TlsConfig := { certFile := "cert.pem", keyFile := "key.pem" }
+  let config : ServerConfig := {
+    port := 8443
+    host := "0.0.0.0"
+    tls := some tlsConfig
+  }
+  config.port ≡ 8443
+  config.host ≡ "0.0.0.0"
+  shouldSatisfy (config.tls.isSome) "should have TLS config"
+
 #generate_tests
 
 -- Main entry point
