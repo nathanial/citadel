@@ -383,12 +383,76 @@ def notFound (message : String := "Not Found") : Response :=
     |>.withContentType "text/plain; charset=utf-8"
     |>.build
 
+/-- Create a 401 Unauthorized response -/
+def unauthorized (message : String := "Unauthorized") : Response :=
+  ResponseBuilder.withStatus StatusCode.unauthorized
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.build
+
+/-- Create a 403 Forbidden response -/
+def forbidden (message : String := "Forbidden") : Response :=
+  ResponseBuilder.withStatus StatusCode.forbidden
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.build
+
+/-- Create a 405 Method Not Allowed response -/
+def methodNotAllowed (allowed : List String := []) : Response :=
+  let allowHeader := String.intercalate ", " allowed
+  ResponseBuilder.withStatus StatusCode.methodNotAllowed
+    |>.withText "Method Not Allowed"
+    |>.withContentType "text/plain; charset=utf-8"
+    |> (if allowed.isEmpty then id else (·.withHeader "Allow" allowHeader))
+    |>.build
+
+/-- Create a 409 Conflict response -/
+def conflict (message : String := "Conflict") : Response :=
+  ResponseBuilder.withStatus StatusCode.conflict
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.build
+
+/-- Create a 413 Payload Too Large response -/
+def payloadTooLarge (message : String := "Payload Too Large") : Response :=
+  ResponseBuilder.withStatus { code := 413 }
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.build
+
+/-- Create a 422 Unprocessable Entity response -/
+def unprocessableEntity (message : String := "Unprocessable Entity") : Response :=
+  ResponseBuilder.withStatus StatusCode.unprocessableEntity
+    |>.withText message
+    |>.withContentType "text/plain; charset=utf-8"
+    |>.build
+
+/-- Create a 429 Too Many Requests response -/
+def tooManyRequests (retryAfter : Option Nat := none) : Response :=
+  let builder := ResponseBuilder.withStatus StatusCode.tooManyRequests
+    |>.withText "Too Many Requests"
+    |>.withContentType "text/plain; charset=utf-8"
+  let builder := match retryAfter with
+    | some secs => builder.withHeader "Retry-After" (toString secs)
+    | none => builder
+  builder.build
+
 /-- Create a 500 Internal Server Error response -/
 def internalError (message : String := "Internal Server Error") : Response :=
   ResponseBuilder.withStatus StatusCode.internalServerError
     |>.withText message
     |>.withContentType "text/plain; charset=utf-8"
     |>.build
+
+/-- Create a 503 Service Unavailable response -/
+def serviceUnavailable (retryAfter : Option Nat := none) : Response :=
+  let builder := ResponseBuilder.withStatus StatusCode.serviceUnavailable
+    |>.withText "Service Unavailable"
+    |>.withContentType "text/plain; charset=utf-8"
+  let builder := match retryAfter with
+    | some secs => builder.withHeader "Retry-After" (toString secs)
+    | none => builder
+  builder.build
 
 /-- Create a redirect response -/
 def redirect (location : String) (permanent : Bool := false) : Response :=

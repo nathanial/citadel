@@ -152,6 +152,60 @@ test "internalError response" := do
   let resp := Response.internalError
   resp.status.code ≡ 500
 
+test "unauthorized response" := do
+  let resp := Response.unauthorized
+  resp.status.code ≡ 401
+  shouldSatisfy (resp.body == "Unauthorized".toUTF8) "body should be Unauthorized"
+
+test "unauthorized response with custom message" := do
+  let resp := Response.unauthorized "Please login first"
+  resp.status.code ≡ 401
+  shouldSatisfy (resp.body == "Please login first".toUTF8) "body should be custom message"
+
+test "forbidden response" := do
+  let resp := Response.forbidden
+  resp.status.code ≡ 403
+  shouldSatisfy (resp.body == "Forbidden".toUTF8) "body should be Forbidden"
+
+test "methodNotAllowed response" := do
+  let resp := Response.methodNotAllowed
+  resp.status.code ≡ 405
+
+test "methodNotAllowed response with Allow header" := do
+  let resp := Response.methodNotAllowed ["GET", "POST", "OPTIONS"]
+  resp.status.code ≡ 405
+  resp.headers.get "Allow" ≡ some "GET, POST, OPTIONS"
+
+test "conflict response" := do
+  let resp := Response.conflict
+  resp.status.code ≡ 409
+
+test "payloadTooLarge response" := do
+  let resp := Response.payloadTooLarge
+  resp.status.code ≡ 413
+
+test "unprocessableEntity response" := do
+  let resp := Response.unprocessableEntity
+  resp.status.code ≡ 422
+
+test "tooManyRequests response" := do
+  let resp := Response.tooManyRequests
+  resp.status.code ≡ 429
+
+test "tooManyRequests response with Retry-After" := do
+  let resp := Response.tooManyRequests (retryAfter := some 60)
+  resp.status.code ≡ 429
+  resp.headers.get "Retry-After" ≡ some "60"
+
+test "serviceUnavailable response" := do
+  let resp := Response.serviceUnavailable
+  resp.status.code ≡ 503
+
+test "serviceUnavailable response with Retry-After" := do
+  let resp := Response.serviceUnavailable (retryAfter := some 120)
+  resp.status.code ≡ 503
+  resp.headers.get "Retry-After" ≡ some "120"
+
 test "response has content length" := do
   let resp := Response.ok "Hello, World!"
   resp.headers.get "Content-Length" ≡ some "13"

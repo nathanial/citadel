@@ -76,17 +76,22 @@ Added 14 form data tests covering urlencoded and multipart parsing.
 
 Added 2 tests for HEAD and OPTIONS routing.
 
-### Additional Status Code Responses
-**Files:** `Citadel/Core.lean:147-182`
+### ~~Additional Status Code Responses~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Core.lean:386-455`
 
-Only 8 response helpers exist. Add:
-- `Response.unauthorized` (401)
-- `Response.forbidden` (403)
-- `Response.methodNotAllowed` (405)
-- `Response.conflict` (409)
-- `Response.payloadTooLarge` (413)
-- `Response.tooManyRequests` (429)
-- `Response.serviceUnavailable` (503)
+~~Only 8 response helpers exist.~~
+
+**Implemented:**
+- `Response.unauthorized` (401) - with optional message
+- `Response.forbidden` (403) - with optional message
+- `Response.methodNotAllowed` (405) - with optional `Allow` header
+- `Response.conflict` (409) - with optional message
+- `Response.payloadTooLarge` (413) - with optional message
+- `Response.unprocessableEntity` (422) - with optional message
+- `Response.tooManyRequests` (429) - with optional `Retry-After` header
+- `Response.serviceUnavailable` (503) - with optional `Retry-After` header
+
+Added 12 tests for the new status code helpers.
 
 ### Cookie Helpers
 Add cookie parsing and setting utilities:
