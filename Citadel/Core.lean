@@ -642,6 +642,12 @@ def redirect (location : String) (permanent : Bool := false) : Response :=
     |>.withHeader "Location" location
     |>.build
 
+/-- Create a 303 See Other redirect (forces GET on redirect, use after POST/PUT/DELETE) -/
+def seeOther (location : String) : Response :=
+  ResponseBuilder.withStatus StatusCode.seeOther
+    |>.withHeader "Location" location
+    |>.build
+
 /-- Create a 414 URI Too Long response -/
 def uriTooLong (message : String := "URI Too Long") : Response :=
   ResponseBuilder.withStatus { code := 414 }
