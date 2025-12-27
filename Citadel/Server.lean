@@ -19,6 +19,10 @@ structure ServerStats where
   activeSseConnections : IO.Ref Nat
   /-- Total connections accepted -/
   totalConnections : IO.Ref Nat
+  /-- Number of active dedicated threads -/
+  dedicatedThreads : IO.Ref Nat
+  /-- Peak dedicated threads (high water mark) -/
+  peakDedicatedThreads : IO.Ref Nat
 
 namespace ServerStats
 
@@ -26,7 +30,9 @@ def create : IO ServerStats := do
   let activeConnections ← IO.mkRef 0
   let activeSseConnections ← IO.mkRef 0
   let totalConnections ← IO.mkRef 0
-  pure { activeConnections, activeSseConnections, totalConnections }
+  let dedicatedThreads ← IO.mkRef 0
+  let peakDedicatedThreads ← IO.mkRef 0
+  pure { activeConnections, activeSseConnections, totalConnections, dedicatedThreads, peakDedicatedThreads }
 
 def incrementActive (s : ServerStats) : IO Nat :=
   s.activeConnections.modifyGet fun n => (n + 1, n + 1)
@@ -43,11 +49,22 @@ def decrementSse (s : ServerStats) : IO Nat :=
 def incrementTotal (s : ServerStats) : IO Nat :=
   s.totalConnections.modifyGet fun n => (n + 1, n + 1)
 
+def incrementDedicated (s : ServerStats) : IO Nat := do
+  let count ← s.dedicatedThreads.modifyGet fun n => (n + 1, n + 1)
+  -- Update peak if this is a new high
+  s.peakDedicatedThreads.modify fun peak => if count > peak then count else peak
+  pure count
+
+def decrementDedicated (s : ServerStats) : IO Nat :=
+  s.dedicatedThreads.modifyGet fun n => (n - 1, n - 1)
+
 def print (s : ServerStats) : IO Unit := do
   let active ← s.activeConnections.get
   let sse ← s.activeSseConnections.get
   let total ← s.totalConnections.get
-  IO.println s!"[STATS] active={active} sse={sse} total={total}"
+  let dedicated ← s.dedicatedThreads.get
+  let peak ← s.peakDedicatedThreads.get
+  IO.println s!"[STATS] active={active} sse={sse} total={total} threads={dedicated} peak={peak}"
 
 end ServerStats
 
@@ -289,7 +306,8 @@ def run (s : Server) : IO Unit := do
     let clientSocket ← serverSocket.accept
     let total ← stats.incrementTotal
     let active ← stats.incrementActive
-    IO.println s!"[CONN] Accepted connection #{total} (active={active})"
+    let threads ← stats.incrementDedicated
+    IO.println s!"[CONN] Accepted #{total} (active={active} threads={threads})"
     -- Use Task.Priority.dedicated so blocking I/O doesn't starve the thread pool
     let _ ← IO.asTask (prio := .dedicated) do
       try
@@ -298,7 +316,8 @@ def run (s : Server) : IO Unit := do
         IO.eprintln s!"[CONN] Connection error: {e}"
       finally
         let active ← stats.decrementActive
-        IO.println s!"[CONN] Connection closed (active={active})"
+        let threads ← stats.decrementDedicated
+        IO.println s!"[CONN] Closed (active={active} threads={threads})"
         try clientSocket.close catch _ => pure ()
 
 end Server
