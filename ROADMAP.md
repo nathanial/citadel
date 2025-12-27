@@ -274,13 +274,17 @@ Built-in or middleware-based rate limiting:
 
 ## Code Cleanup
 
-### Split Server.lean
-**Files:** `Citadel/Server.lean` (325 lines)
+### ~~Split Server.lean~~ ✅ DONE
+**Files:** `Citadel/Server.lean`, `Citadel/Server/Stats.lean`, `Citadel/Server/Connection.lean`
 
-Server.lean handles too many concerns. Split into:
-- `Citadel/Server/Loop.lean` - Main server loop
-- `Citadel/Server/Connection.lean` - Connection handling
-- `Citadel/Server/Stats.lean` - Statistics tracking
+~~Server.lean handles too many concerns.~~
+
+**Split into:**
+- `Citadel/Server/Stats.lean` - ServerStats structure, global stats, increment/decrement helpers
+- `Citadel/Server/Connection.lean` - serializeResponse, ReadResult, readRequest, sendResponse utilities
+- `Citadel/Server.lean` - Server structure, route configuration, connection/request handling, server loop
+
+Server.lean reduced from ~500 lines to ~350 lines with reusable utilities extracted.
 
 ### Configurable Socket Settings
 **Files:** `ffi/socket.c:69-72, 149-150`

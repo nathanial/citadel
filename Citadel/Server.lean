@@ -6,86 +6,13 @@
 import Citadel.Core
 import Citadel.Socket
 import Citadel.SSE
+import Citadel.Server.Stats
+import Citadel.Server.Connection
 
 namespace Citadel
 
 open Herald.Core
-
-/-- Debug statistics for monitoring server health -/
-structure ServerStats where
-  /-- Number of active HTTP connection handlers -/
-  activeConnections : IO.Ref Nat
-  /-- Number of active SSE connections -/
-  activeSseConnections : IO.Ref Nat
-  /-- Total connections accepted -/
-  totalConnections : IO.Ref Nat
-  /-- Number of active dedicated threads -/
-  dedicatedThreads : IO.Ref Nat
-  /-- Peak dedicated threads (high water mark) -/
-  peakDedicatedThreads : IO.Ref Nat
-
-namespace ServerStats
-
-def create : IO ServerStats := do
-  let activeConnections ← IO.mkRef 0
-  let activeSseConnections ← IO.mkRef 0
-  let totalConnections ← IO.mkRef 0
-  let dedicatedThreads ← IO.mkRef 0
-  let peakDedicatedThreads ← IO.mkRef 0
-  pure { activeConnections, activeSseConnections, totalConnections, dedicatedThreads, peakDedicatedThreads }
-
-def incrementActive (s : ServerStats) : IO Nat :=
-  s.activeConnections.modifyGet fun n => (n + 1, n + 1)
-
-def decrementActive (s : ServerStats) : IO Nat :=
-  s.activeConnections.modifyGet fun n => (n - 1, n - 1)
-
-def incrementSse (s : ServerStats) : IO Nat :=
-  s.activeSseConnections.modifyGet fun n => (n + 1, n + 1)
-
-def decrementSse (s : ServerStats) : IO Nat :=
-  s.activeSseConnections.modifyGet fun n => (n - 1, n - 1)
-
-def incrementTotal (s : ServerStats) : IO Nat :=
-  s.totalConnections.modifyGet fun n => (n + 1, n + 1)
-
-def incrementDedicated (s : ServerStats) : IO Nat := do
-  let count ← s.dedicatedThreads.modifyGet fun n => (n + 1, n + 1)
-  -- Update peak if this is a new high
-  s.peakDedicatedThreads.modify fun peak => if count > peak then count else peak
-  pure count
-
-def decrementDedicated (s : ServerStats) : IO Nat :=
-  s.dedicatedThreads.modifyGet fun n => (n - 1, n - 1)
-
-def print (s : ServerStats) : IO Unit := do
-  let active ← s.activeConnections.get
-  let sse ← s.activeSseConnections.get
-  let total ← s.totalConnections.get
-  let dedicated ← s.dedicatedThreads.get
-  let peak ← s.peakDedicatedThreads.get
-  IO.println s!"[STATS] active={active} sse={sse} total={total} threads={dedicated} peak={peak}"
-
-end ServerStats
-
-/-- Global server stats (initialized on first server run) -/
-initialize globalStats : IO.Ref (Option ServerStats) ← IO.mkRef none
-
-def getOrCreateStats : IO ServerStats := do
-  match ← globalStats.get with
-  | some s => pure s
-  | none =>
-    let s ← ServerStats.create
-    globalStats.set (some s)
-    pure s
-
-/-- Serialize a response to bytes for sending over the wire -/
-def serializeResponse (resp : Response) : ByteArray :=
-  let statusLine := s!"{resp.version} {resp.status.code} {resp.reason}\r\n"
-  let headerLines := resp.headers.foldl (init := "") fun acc h =>
-    acc ++ s!"{h.name}: {h.value}\r\n"
-  let header := statusLine ++ headerLines ++ "\r\n"
-  header.toUTF8 ++ resp.body
+open Connection
 
 /-- HTTP server -/
 structure Server where
@@ -163,28 +90,6 @@ private def matchSSERoute (s : Server) (path : String) : Option String :=
   s.sseRoutes.findSome? fun (pattern, topic) =>
     if pattern == cleanPath then some topic else none
 
-/-- Send HTTP response to client socket -/
-private def sendResponse (client : Socket) (resp : Response) : IO Unit := do
-  let data := serializeResponse resp
-  client.send data
-
-/-- Send HTTP response to any socket type -/
-private def sendResponseAny (client : AnySocket) (resp : Response) : IO Unit := do
-  let data := serializeResponse resp
-  client.send data
-
-/-- SSE keep-alive loop: sends pings and detects disconnection -/
-private partial def sseKeepAliveLoop (client : Socket) (manager : SSE.ConnectionManager) (clientId : Nat) : IO Unit := do
-  IO.sleep 1000  -- 1 second check interval for faster disconnect detection
-  try
-    -- Try to send a ping - this will fail if client disconnected
-    SSE.sendPing client
-    sseKeepAliveLoop client manager clientId
-  catch _ =>
-    -- Client disconnected (send failed)
-    IO.println s!"[SSE] Client {clientId} ping failed, removing"
-    manager.removeClient clientId
-
 /-- Handle an SSE connection - keeps connection open until client disconnects -/
 private def handleSSEConnection (s : Server) (client : Socket) (topic : String) : IO Unit := do
   let stats ← getOrCreateStats
@@ -242,60 +147,6 @@ private def handleRequest (s : Server) (req : Request) : IO Response := do
       let methodStrs := allowedMethods.map fun m => m.toString
       IO.println s!"[REQ] {req.method} {req.path} -> 405 (allowed: {String.intercalate ", " methodStrs})"
       pure (Response.methodNotAllowed methodStrs)
-
-/-- Result of reading a request from the socket -/
-inductive ReadResult where
-  | success (req : Request)
-  | connectionClosed
-  | parseError
-  | payloadTooLarge
-  | timeout
-
-/-- Read HTTP request from client socket -/
-private def readRequest (client : Socket) (config : ServerConfig) : IO ReadResult := do
-  let mut buffer := ByteArray.empty
-  let mut attempts := 0
-  let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)
-
-  while attempts < maxAttempts do
-    let chunk ← client.recv 16384  -- 16KB chunks for better performance
-    if chunk.isEmpty then
-      return .connectionClosed  -- Client closed connection (recv returned 0)
-    else
-      buffer := buffer ++ chunk
-      -- Check body size limit
-      if buffer.size > config.maxBodySize then
-        return .payloadTooLarge
-      -- Try to parse
-      match Herald.parseRequest buffer with
-      | .ok result => return .success result.request
-      | .error .incomplete => attempts := attempts + 1  -- Wait for more data
-      | .error _ => return .parseError
-
-  return .timeout  -- Exceeded max attempts
-
-/-- Read HTTP request from any socket type -/
-private def readRequestAny (client : AnySocket) (config : ServerConfig) : IO ReadResult := do
-  let mut buffer := ByteArray.empty
-  let mut attempts := 0
-  let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)
-
-  while attempts < maxAttempts do
-    let chunk ← client.recv 16384  -- 16KB chunks for better performance
-    if chunk.isEmpty then
-      return .connectionClosed  -- Client closed connection (recv returned 0)
-    else
-      buffer := buffer ++ chunk
-      -- Check body size limit
-      if buffer.size > config.maxBodySize then
-        return .payloadTooLarge
-      -- Try to parse
-      match Herald.parseRequest buffer with
-      | .ok result => return .success result.request
-      | .error .incomplete => attempts := attempts + 1  -- Wait for more data
-      | .error _ => return .parseError
-
-  return .timeout  -- Exceeded max attempts
 
 /-- Handle a client connection -/
 private def handleConnection (s : Server) (client : Socket) : IO Unit := do
