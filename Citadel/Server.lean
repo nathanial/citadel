@@ -210,7 +210,9 @@ private def handleRequest (s : Server) (req : Request) : IO Response := do
   | some (route, params) =>
     let serverReq : ServerRequest := { request := req, params }
     try
-      let resp ← route.handler serverReq
+      -- Apply middleware chain to the handler
+      let wrappedHandler := Middleware.chain s.middleware route.handler
+      let resp ← wrappedHandler serverReq
       let elapsed := (← IO.monoMsNow) - startTime
       IO.println s!"[REQ] {req.method} {req.path} -> {resp.status.code} ({elapsed}ms)"
       pure resp

@@ -6,12 +6,12 @@ This roadmap outlines improvements, bug fixes, and new features for the Citadel 
 
 ## Critical Bugs
 
-### Middleware Chain Not Invoked
-**Files:** `Citadel/Server.lean:97, 136-138`
+### ~~Middleware Chain Not Invoked~~ ✅ FIXED
+**Files:** `Citadel/Server.lean:214`
 
-The `use()` method adds middleware to the server's middleware list, but `handleRequest()` calls handlers directly without invoking the middleware chain. This makes the middleware API non-functional.
+~~The `use()` method adds middleware to the server's middleware list, but `handleRequest()` calls handlers directly without invoking the middleware chain. This makes the middleware API non-functional.~~
 
-**Fix:** Wrap handler execution with middleware chain invocation in `handleRequest()`.
+**Fixed:** `handleRequest()` now applies the middleware chain via `Middleware.chain s.middleware route.handler`. Added 4 middleware tests to verify correct behavior.
 
 ### Configuration Fields Unused
 **Files:** `Citadel/Core.lean:19-23`, `ffi/socket.c:69-72`

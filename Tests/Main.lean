@@ -277,6 +277,93 @@ test "custom config values" := do
   config.host ≡ "0.0.0.0"
   config.maxBodySize ≡ 1024
 
+-- ============================================================================
+-- Middleware Tests
+-- ============================================================================
+
+testSuite "Middleware"
+
+test "identity middleware does nothing" := do
+  let handler : Handler := fun _ => pure (Response.ok "Hello")
+  let wrapped := Middleware.identity handler
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  let resp ← wrapped req
+  resp.status.code ≡ 200
+  shouldSatisfy (resp.body == "Hello".toUTF8) "body should be Hello"
+
+test "middleware can modify response" := do
+  -- Middleware that adds a header to the response
+  let addHeader : Middleware := fun next => fun req => do
+    let resp ← next req
+    pure { resp with headers := resp.headers.add "X-Middleware" "applied" }
+  let handler : Handler := fun _ => pure (Response.ok "Hello")
+  let wrapped := addHeader handler
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  let resp ← wrapped req
+  resp.headers.get "X-Middleware" ≡ some "applied"
+
+test "middleware chain applies in correct order" := do
+  -- First middleware adds "1"
+  let mw1 : Middleware := fun next => fun req => do
+    let resp ← next req
+    let body := String.fromUTF8! resp.body ++ "1"
+    pure { resp with body := body.toUTF8 }
+  -- Second middleware adds "2"
+  let mw2 : Middleware := fun next => fun req => do
+    let resp ← next req
+    let body := String.fromUTF8! resp.body ++ "2"
+    pure { resp with body := body.toUTF8 }
+  let handler : Handler := fun _ => pure (Response.ok "X")
+  -- Chain: mw1 wraps mw2 wraps handler
+  -- Execution: mw1 calls mw2 which calls handler
+  -- Response flows back: handler returns "X", mw2 adds "2" -> "X2", mw1 adds "1" -> "X21"
+  let chain := Middleware.chain [mw1, mw2]
+  let wrapped := chain handler
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  let resp ← wrapped req
+  -- mw1 is outermost, so it runs last on response -> appends "1" last
+  shouldSatisfy (resp.body == "X21".toUTF8) "body should be X21 (handler X, then mw2 adds 2, then mw1 adds 1)"
+
+test "empty middleware chain is identity" := do
+  let handler : Handler := fun _ => pure (Response.ok "Unchanged")
+  let chain := Middleware.chain []
+  let wrapped := chain handler
+  let req : ServerRequest := {
+    request := {
+      method := Method.GET
+      path := "/"
+      version := Version.http11
+      headers := Headers.empty
+      body := ByteArray.empty
+    }
+  }
+  let resp ← wrapped req
+  shouldSatisfy (resp.body == "Unchanged".toUTF8) "body should be Unchanged"
+
 #generate_tests
 
 -- Main entry point
