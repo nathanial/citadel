@@ -234,8 +234,9 @@ let config : ServerConfig := {
 
 **Not implemented (future work):**
 - mTLS (client certificate verification)
-- Automatic HTTP→HTTPS redirect middleware
 - SNI (multiple certificates)
+
+**HTTP→HTTPS redirect:** Implemented in Loom as `Middleware.httpsRedirect` and `App.runWithHttpsRedirect`
 
 Added 4 TLS configuration tests
 
