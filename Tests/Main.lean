@@ -232,6 +232,37 @@ test "router wrong method returns 404" := do
   let resp ← router.handle req
   resp.status.code ≡ 404
 
+test "router matches HEAD route" := do
+  let router := Router.empty
+    |>.head "/resource" (fun _ => pure (Response.ok ""))
+  let req : Request := {
+    method := Method.HEAD
+    path := "/resource"
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  let resp ← router.handle req
+  resp.status.code ≡ 200
+
+test "router matches OPTIONS route" := do
+  let router := Router.empty
+    |>.options "/api/users" (fun _ => pure
+      (ResponseBuilder.withStatus StatusCode.noContent
+        |>.withHeader "Allow" "GET, POST, OPTIONS"
+        |>.withHeader "Access-Control-Allow-Methods" "GET, POST"
+        |>.build))
+  let req : Request := {
+    method := Method.OPTIONS
+    path := "/api/users"
+    version := Version.http11
+    headers := Headers.empty
+    body := ByteArray.empty
+  }
+  let resp ← router.handle req
+  resp.status.code ≡ 204
+  resp.headers.get "Allow" ≡ some "GET, POST, OPTIONS"
+
 -- ============================================================================
 -- ServerRequest Tests
 -- ============================================================================

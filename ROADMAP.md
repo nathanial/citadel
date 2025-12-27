@@ -65,12 +65,16 @@ Added 14 query string tests covering edge cases.
 
 Added 14 form data tests covering urlencoded and multipart parsing.
 
-### Additional HTTP Method Helpers
-**Files:** `Citadel/Core.lean`
+### ~~Additional HTTP Method Helpers~~ ✅ IMPLEMENTED
+**Files:** `Citadel/Core.lean:494-500`, `Citadel/Server.lean:136-142`
 
-Add route helpers for:
-- `Server.head` - HEAD requests
-- `Server.options` - OPTIONS requests (needed for CORS preflight)
+~~Add route helpers for HEAD and OPTIONS requests.~~
+
+**Implemented:**
+- `Router.head` / `Server.head` - HEAD requests
+- `Router.options` / `Server.options` - OPTIONS requests (for CORS preflight)
+
+Added 2 tests for HEAD and OPTIONS routing.
 
 ### Additional Status Code Responses
 **Files:** `Citadel/Core.lean:147-182`

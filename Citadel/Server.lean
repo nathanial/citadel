@@ -133,6 +133,14 @@ def delete (s : Server) (pattern : String) (handler : Handler) : Server :=
 def patch (s : Server) (pattern : String) (handler : Handler) : Server :=
   s.route Method.PATCH pattern handler
 
+/-- Add a HEAD route -/
+def head (s : Server) (pattern : String) (handler : Handler) : Server :=
+  s.route Method.HEAD pattern handler
+
+/-- Add an OPTIONS route -/
+def options (s : Server) (pattern : String) (handler : Handler) : Server :=
+  s.route Method.OPTIONS pattern handler
+
 /-- Add middleware -/
 def use (s : Server) (mw : Middleware) : Server :=
   { s with middleware := s.middleware ++ [mw] }

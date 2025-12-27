@@ -491,6 +491,14 @@ def delete (r : Router) (pattern : String) (handler : Handler) : Router :=
 def patch (r : Router) (pattern : String) (handler : Handler) : Router :=
   r.add Method.PATCH pattern handler
 
+/-- Add a HEAD route -/
+def head (r : Router) (pattern : String) (handler : Handler) : Router :=
+  r.add Method.HEAD pattern handler
+
+/-- Add an OPTIONS route -/
+def options (r : Router) (pattern : String) (handler : Handler) : Router :=
+  r.add Method.OPTIONS pattern handler
+
 /-- Find a matching route for a request -/
 def findRoute (r : Router) (req : Request) : Option (Route × Params) :=
   r.routes.findSome? fun route =>
