@@ -42,6 +42,9 @@ def sendResponseAny (client : AnySocket) (resp : Response) : IO Unit := do
 
 /-- Read HTTP request from client socket -/
 def readRequest (client : Socket) (config : ServerConfig) : IO ReadResult := do
+  -- Apply requestTimeout from config
+  client.setTimeout config.requestTimeout.toUInt32
+
   let mut buffer := ByteArray.empty
   let mut attempts := 0
   let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)
@@ -65,6 +68,9 @@ def readRequest (client : Socket) (config : ServerConfig) : IO ReadResult := do
 
 /-- Read HTTP request from any socket type -/
 def readRequestAny (client : AnySocket) (config : ServerConfig) : IO ReadResult := do
+  -- Apply requestTimeout from config
+  client.setTimeout config.requestTimeout.toUInt32
+
   let mut buffer := ByteArray.empty
   let mut attempts := 0
   let maxAttempts := 1000  -- Allow up to ~16MB uploads (1000 * 16KB)

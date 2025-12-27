@@ -226,6 +226,23 @@ LEAN_EXPORT uint32_t citadel_socket_fd(b_lean_obj_arg sock_obj) {
     return (uint32_t)sock->fd;
 }
 
+/* Set socket recv/send timeouts in seconds */
+LEAN_EXPORT lean_obj_res citadel_socket_set_timeout(
+    b_lean_obj_arg sock_obj,
+    uint32_t timeout_secs,
+    lean_obj_arg world
+) {
+    citadel_socket_t *sock = citadel_socket_unbox(sock_obj);
+
+    struct timeval timeout;
+    timeout.tv_sec = timeout_secs;
+    timeout.tv_usec = 0;
+    setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    return lean_io_result_mk_ok(lean_box(0));
+}
+
 /* ============================================================================
  * TLS Socket Implementation using OpenSSL
  * ============================================================================
@@ -560,5 +577,22 @@ LEAN_EXPORT lean_obj_res citadel_tls_socket_close(
     }
 
     lean_dec_ref(sock_obj);
+    return lean_io_result_mk_ok(lean_box(0));
+}
+
+/* Set TLS socket recv/send timeouts in seconds */
+LEAN_EXPORT lean_obj_res citadel_tls_socket_set_timeout(
+    b_lean_obj_arg sock_obj,
+    uint32_t timeout_secs,
+    lean_obj_arg world
+) {
+    citadel_tls_socket_t *sock = citadel_tls_socket_unbox(sock_obj);
+
+    struct timeval timeout;
+    timeout.tv_sec = timeout_secs;
+    timeout.tv_usec = 0;
+    setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
     return lean_io_result_mk_ok(lean_box(0));
 }

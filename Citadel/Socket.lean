@@ -49,6 +49,10 @@ opaque close (sock : Socket) : IO Unit
 @[extern "citadel_socket_fd"]
 opaque fd (sock : @& Socket) : UInt32
 
+/-- Set recv/send timeouts in seconds -/
+@[extern "citadel_socket_set_timeout"]
+opaque setTimeout (sock : @& Socket) (timeoutSecs : UInt32) : IO Unit
+
 end Socket
 
 -- ============================================================================
@@ -90,6 +94,10 @@ opaque send (sock : @& TlsSocket) (data : @& ByteArray) : IO Unit
 @[extern "citadel_tls_socket_close"]
 opaque close (sock : TlsSocket) : IO Unit
 
+/-- Set recv/send timeouts in seconds -/
+@[extern "citadel_tls_socket_set_timeout"]
+opaque setTimeout (sock : @& TlsSocket) (timeoutSecs : UInt32) : IO Unit
+
 end TlsSocket
 
 -- ============================================================================
@@ -120,6 +128,12 @@ def close (s : AnySocket) : IO Unit :=
   match s with
   | .plain sock => sock.close
   | .tls sock => sock.close
+
+/-- Set recv/send timeouts in seconds -/
+def setTimeout (s : AnySocket) (timeoutSecs : UInt32) : IO Unit :=
+  match s with
+  | .plain sock => sock.setTimeout timeoutSecs
+  | .tls sock => sock.setTimeout timeoutSecs
 
 end AnySocket
 

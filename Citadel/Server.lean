@@ -151,8 +151,13 @@ private def handleRequest (s : Server) (req : Request) : IO Response := do
 /-- Handle a client connection -/
 private def handleConnection (s : Server) (client : Socket) : IO Unit := do
   let mut keepAlive := true
+  let mut firstRequest := true
 
   while keepAlive do
+    -- For subsequent requests, use keepAliveTimeout while waiting
+    if !firstRequest then
+      client.setTimeout s.config.keepAliveTimeout.toUInt32
+
     match ← readRequest client s.config with
     | .success req =>
       -- Check if this is an SSE endpoint
@@ -170,6 +175,7 @@ private def handleConnection (s : Server) (client : Socket) : IO Unit := do
         let keepAliveRequested := connHeader == some "keep-alive"
 
         keepAlive := if isHttp10 then keepAliveRequested else !closeRequested
+        firstRequest := false
 
         -- Handle request
         let resp ← s.handleRequest req
@@ -206,8 +212,13 @@ private def handleConnection (s : Server) (client : Socket) : IO Unit := do
 private def handleTlsConnection (s : Server) (client : TlsSocket) : IO Unit := do
   let anyClient := AnySocket.tls client
   let mut keepAlive := true
+  let mut firstRequest := true
 
   while keepAlive do
+    -- For subsequent requests, use keepAliveTimeout while waiting
+    if !firstRequest then
+      anyClient.setTimeout s.config.keepAliveTimeout.toUInt32
+
     match ← readRequestAny anyClient s.config with
     | .success req =>
       -- Regular HTTP request (SSE not supported over TLS for now)
@@ -218,6 +229,7 @@ private def handleTlsConnection (s : Server) (client : TlsSocket) : IO Unit := d
       let keepAliveRequested := connHeader == some "keep-alive"
 
       keepAlive := if isHttp10 then keepAliveRequested else !closeRequested
+      firstRequest := false
 
       -- Handle request
       let resp ← s.handleRequest req

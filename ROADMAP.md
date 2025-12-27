@@ -4,21 +4,6 @@ This roadmap outlines improvements, bug fixes, and new features for the Citadel 
 
 ---
 
-## Critical Bugs
-
-### Configuration Fields Partially Unused
-**Files:** `Citadel/Core.lean:19-23`, `ffi/socket.c:69-72`
-
-Some `ServerConfig` fields are defined but not enforced:
-- `keepAliveTimeout` - Not applied to connections
-- `requestTimeout` - Not applied to request handling
-
-Socket timeouts are hardcoded to 5 seconds in C code instead of using config values.
-
-**TODO:** Pass `keepAliveTimeout` and `requestTimeout` to socket layer.
-
----
-
 ## Error Handling
 
 ### Request Validation
@@ -131,11 +116,10 @@ Built-in or middleware-based rate limiting:
 
 ## Code Cleanup
 
-### Configurable Socket Settings
-**Files:** `ffi/socket.c:69-72, 149-150`
+### Configurable Buffer Sizes
+**Files:** `ffi/socket.c`
 
-Make hardcoded values configurable:
-- Socket timeout (currently 5 seconds)
+Make buffer sizes configurable:
 - Receive buffer size (currently 16KB)
 - Send buffer size
 
