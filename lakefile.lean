@@ -10,9 +10,9 @@ package citadel where
     "-lcrypto"
   ]
 
-require herald from ".." / "herald"
-require crucible from ".." / "crucible"
-require staple from ".." / "staple"
+require herald from git "https://github.com/nathanial/herald" @ "v0.0.1"
+require crucible from git "https://github.com/nathanial/crucible" @ "v0.0.1"
+require staple from git "https://github.com/nathanial/staple" @ "v0.0.1"
 
 @[default_target]
 lean_lib Citadel where
