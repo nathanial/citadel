@@ -6,3 +6,5 @@
 *.trace
 *.hash
 .DS_Store
+.lake
+lake-manifest.json
