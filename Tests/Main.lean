@@ -1169,7 +1169,7 @@ test "ServerConfig with TLS and custom port" := do
   config.host ≡ "0.0.0.0"
   shouldSatisfy (config.tls.isSome) "should have TLS config"
 
-#generate_tests
+
 
 -- Main entry point
 def main : IO UInt32 := do
