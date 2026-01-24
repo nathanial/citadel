@@ -1,59 +1,18 @@
 /-
   Citadel Socket FFI
-  TCP socket bindings using POSIX sockets.
+  Plain TCP sockets via Jack.
   TLS socket bindings using OpenSSL.
 -/
+import Jack
 
 namespace Citadel
 
 -- ============================================================================
--- Plain TCP Socket
+-- Plain TCP Socket (re-exported from Jack)
 -- ============================================================================
 
-/-- Opaque TCP socket handle -/
-opaque SocketPointed : NonemptyType
-def Socket : Type := SocketPointed.type
-instance : Nonempty Socket := SocketPointed.property
-
-namespace Socket
-
-/-- Create a new TCP socket -/
-@[extern "citadel_socket_new"]
-opaque new : IO Socket
-
-/-- Bind socket to an address and port -/
-@[extern "citadel_socket_bind"]
-opaque bind (sock : @& Socket) (host : @& String) (port : UInt16) : IO Unit
-
-/-- Start listening for connections -/
-@[extern "citadel_socket_listen"]
-opaque listen (sock : @& Socket) (backlog : UInt32) : IO Unit
-
-/-- Accept a new connection, returns the client socket -/
-@[extern "citadel_socket_accept"]
-opaque accept (sock : @& Socket) : IO Socket
-
-/-- Receive data from socket, up to maxBytes -/
-@[extern "citadel_socket_recv"]
-opaque recv (sock : @& Socket) (maxBytes : UInt32) : IO ByteArray
-
-/-- Send data to socket -/
-@[extern "citadel_socket_send"]
-opaque send (sock : @& Socket) (data : @& ByteArray) : IO Unit
-
-/-- Close the socket -/
-@[extern "citadel_socket_close"]
-opaque close (sock : Socket) : IO Unit
-
-/-- Get the underlying file descriptor (for debugging) -/
-@[extern "citadel_socket_fd"]
-opaque fd (sock : @& Socket) : UInt32
-
-/-- Set recv/send timeouts in seconds -/
-@[extern "citadel_socket_set_timeout"]
-opaque setTimeout (sock : @& Socket) (timeoutSecs : UInt32) : IO Unit
-
-end Socket
+/-- Plain TCP socket, re-exported from Jack for backwards compatibility -/
+abbrev Socket := Jack.Socket
 
 -- ============================================================================
 -- TLS Socket (HTTPS)
@@ -114,25 +73,25 @@ namespace AnySocket
 /-- Receive data from either socket type -/
 def recv (s : AnySocket) (maxBytes : UInt32) : IO ByteArray :=
   match s with
-  | .plain sock => sock.recv maxBytes
+  | .plain sock => Jack.Socket.recv sock maxBytes
   | .tls sock => sock.recv maxBytes
 
 /-- Send data to either socket type -/
 def send (s : AnySocket) (data : ByteArray) : IO Unit :=
   match s with
-  | .plain sock => sock.send data
+  | .plain sock => Jack.Socket.send sock data
   | .tls sock => sock.send data
 
 /-- Close either socket type -/
 def close (s : AnySocket) : IO Unit :=
   match s with
-  | .plain sock => sock.close
+  | .plain sock => Jack.Socket.close sock
   | .tls sock => sock.close
 
 /-- Set recv/send timeouts in seconds -/
 def setTimeout (s : AnySocket) (timeoutSecs : UInt32) : IO Unit :=
   match s with
-  | .plain sock => sock.setTimeout timeoutSecs
+  | .plain sock => Jack.Socket.setTimeout sock timeoutSecs
   | .tls sock => sock.setTimeout timeoutSecs
 
 end AnySocket

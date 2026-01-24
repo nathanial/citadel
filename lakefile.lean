@@ -13,6 +13,7 @@ package citadel where
 require herald from git "https://github.com/nathanial/herald" @ "v0.0.2"
 require crucible from git "https://github.com/nathanial/crucible" @ "v0.0.9"
 require staple from git "https://github.com/nathanial/staple" @ "v0.0.2"
+require jack from "../../network/jack"
 
 @[default_target]
 lean_lib Citadel where

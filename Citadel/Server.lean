@@ -285,7 +285,7 @@ private def handleTlsConnection (s : Server) (client : TlsSocket) : IO Unit := d
 /-- Run plain HTTP server (internal) -/
 private def runPlain (s : Server) : IO Unit := do
   -- Create server socket
-  let serverSocket ← Socket.new
+  let serverSocket ← Jack.Socket.new
 
   -- Bind to address
   serverSocket.bind s.config.host s.config.port
